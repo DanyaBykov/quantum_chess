@@ -97,7 +97,7 @@ describe("App", () => {
 
     await screen.findByText("Ready");
     expect(screen.getAllByRole("button", { name: /Square / })).toHaveLength(64);
-    expect(screen.getByRole("button", { name: "Square e1" })).toHaveTextContent("K");
+    expect(screen.getByRole("button", { name: "Square e1" })).toHaveTextContent("♔");
   });
 
   it("tracks selected squares in the action panel", async () => {
@@ -142,7 +142,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Square c3" }));
     fireEvent.click(screen.getByRole("button", { name: "Execute" }));
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Square c3" })).toHaveTextContent("N"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Square c3" })).toHaveTextContent("♘"));
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/game/move/classical",
       expect.objectContaining({
