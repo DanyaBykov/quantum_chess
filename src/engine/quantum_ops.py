@@ -1,10 +1,9 @@
-import numpy as np
 import copy
-from typing import Tuple, Optional
-import chess
+import math
+import random
 
 # Assuming BoardState and BasisState are importable from the previous step
-from engine.board_state import BoardState, BasisState
+from engine.board_state import BoardState, BasisState, parse_square
 
 def _move_piece_in_tuple(basis: BasisState, src_idx: int, tgt_idx: int) -> BasisState:
     """Helper to generate a new basis state tuple after moving a piece."""
@@ -22,13 +21,13 @@ def split_move(state: BoardState, src: str, t1: str, t2: str) -> BoardState:
     """
     new_state = BoardState(entanglement_map=copy.deepcopy(state.entanglement_map))
     
-    src_idx = chess.parse_square(src)
-    t1_idx = chess.parse_square(t1)
-    t2_idx = chess.parse_square(t2)
+    src_idx = parse_square(src)
+    t1_idx = parse_square(t1)
+    t2_idx = parse_square(t2)
     
     # sqrt-iSWAP constants
-    amp_t1_factor = 1 / np.sqrt(2) + 0j
-    amp_t2_factor = 0 + 1j / np.sqrt(2) # Applies an imaginary phase
+    amp_t1_factor = 1 / math.sqrt(2) + 0j
+    amp_t2_factor = 0 + 1j / math.sqrt(2) # Applies an imaginary phase
     
     for basis, amp in state.amplitudes.items():
         if basis[src_idx] is not None:
@@ -52,9 +51,9 @@ def merge_move(state: BoardState, src1: str, src2: str, target: str) -> BoardSta
     """
     new_state = BoardState(entanglement_map=copy.deepcopy(state.entanglement_map))
     
-    src1_idx = chess.parse_square(src1)
-    src2_idx = chess.parse_square(src2)
-    tgt_idx = chess.parse_square(target)
+    src1_idx = parse_square(src1)
+    src2_idx = parse_square(src2)
+    tgt_idx = parse_square(target)
     
     for basis, amp in state.amplitudes.items():
         # If the basis state has the piece at either source, move it to the target
@@ -78,7 +77,7 @@ def measure(state: BoardState, target_square: str) -> BoardState:
     Measures a square, forcing the wavefunction to collapse.
     Samples from the amplitude-squared distribution and filters out invalid universes.
     """
-    tgt_idx = chess.parse_square(target_square)
+    tgt_idx = parse_square(target_square)
     
     # Calculate probability of the square being occupied
     prob_occupied = 0.0
@@ -87,7 +86,11 @@ def measure(state: BoardState, target_square: str) -> BoardState:
             prob_occupied += abs(amp)**2
             
     # Sample from the probability distribution to determine the classical outcome
-    is_occupied = np.random.choice([True, False], p=[prob_occupied, 1.0 - prob_occupied])
+    is_occupied = random.choices(
+        [True, False],
+        weights=[prob_occupied, 1.0 - prob_occupied],
+        k=1,
+    )[0]
     
     new_state = BoardState(entanglement_map=copy.deepcopy(state.entanglement_map))
     
