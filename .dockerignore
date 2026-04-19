@@ -1,0 +1,9 @@
+.git
+.github
+.venv
+__pycache__/
+*.py[cod]
+ui/node_modules
+ui/dist
+ui/*.tsbuildinfo
+tests/__pycache__
