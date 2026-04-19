@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 .venv/
+ui/node_modules/
+ui/dist/
+ui/*.tsbuildinfo

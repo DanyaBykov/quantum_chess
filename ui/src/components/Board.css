@@ -1,0 +1,50 @@
+.board {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.square {
+  position: relative;
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: 0.9rem;
+  padding: 0.4rem;
+  color: #0f172a;
+  text-align: left;
+  cursor: pointer;
+}
+
+.square-light {
+  background: #f4f0e8;
+}
+
+.square-dark {
+  background: #c9b18f;
+}
+
+.square-selected {
+  outline: 3px solid #d9480f;
+}
+
+.square-piece {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.square-probability,
+.square-name {
+  position: absolute;
+  font-size: 0.75rem;
+}
+
+.square-probability {
+  top: 0.4rem;
+  right: 0.45rem;
+}
+
+.square-name {
+  bottom: 0.35rem;
+  left: 0.45rem;
+}
