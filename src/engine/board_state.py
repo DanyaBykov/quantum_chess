@@ -22,6 +22,16 @@ def parse_square(square_name: str) -> int:
     return FILES.index(file_name) + 8 * (int(rank_name) - 1)
 
 
+def square_name(square_index: int) -> str:
+    """Convert a zero-based square index into algebraic notation like 'a1'."""
+    if square_index < 0 or square_index >= 64:
+        raise ValueError(f"invalid square index: {square_index!r}")
+
+    file_name = FILES[square_index % 8]
+    rank_name = RANKS[square_index // 8]
+    return f"{file_name}{rank_name}"
+
+
 def _initial_basis_state() -> BasisState:
     """Build the standard chess starting position as a basis-state tuple."""
     squares = [None] * 64
@@ -85,6 +95,30 @@ class BoardState:
                 total_amplitude += amp
                 
         return total_amplitude
+
+    def occupied_piece(self, square_name: str) -> Optional[str]:
+        """
+        Returns the unique piece symbol found on this square across occupied branches.
+
+        Raises ValueError if different piece symbols occupy the same square across
+        the current superposition.
+        """
+        square_index = parse_square(square_name)
+        piece = None
+
+        for basis_state in self.amplitudes:
+            current_piece = basis_state[square_index]
+            if current_piece is None:
+                continue
+            if piece is None:
+                piece = current_piece
+                continue
+            if piece != current_piece:
+                raise ValueError(
+                    f"inconsistent piece identity at {square_name}: {piece!r} vs {current_piece!r}"
+                )
+
+        return piece
         
     def probability(self, square_name: str) -> float:
         """Returns the total probability that a square is occupied."""

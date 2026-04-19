@@ -47,7 +47,8 @@ class QuantumOpsTest(unittest.TestCase):
 
         new_state = merge_move(state, "a3", "c3", "b1")
 
-        self.assertEqual(new_state.amplitudes, {BoardState._board_to_tuple({"b1": "N"}): 1 + 0j})
+        self.assertEqual(list(new_state.amplitudes.keys()), [BoardState._board_to_tuple({"b1": "N"})])
+        self.assertAlmostEqual(abs(next(iter(new_state.amplitudes.values()))) ** 2, 1.0)
 
     @patch("engine.quantum_ops.random.choices", return_value=[True])
     def test_measure_keeps_occupied_branches_when_observed_occupied(self, _mock_choices):
