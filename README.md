@@ -2,12 +2,12 @@
 
 ## Docker Compose
 
-Run the API and UI together:
+Run the single-container app:
 
 ```bash
 docker compose up --build
 ```
 
-Services:
-- UI: `http://localhost:8080`
-- API: `http://localhost:8000`
+App:
+- UI: `http://localhost:8000`
+- API: `http://localhost:8000/game`
