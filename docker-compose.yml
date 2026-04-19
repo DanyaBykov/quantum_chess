@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
+    networks:
+      quantum_chess_net:
+        ipv4_address: 172.28.0.10
     ports:
       - "8000:8000"
 
@@ -12,7 +15,15 @@ services:
       dockerfile: ui/Dockerfile
     depends_on:
       - api
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      quantum_chess_net:
+        ipv4_address: 172.28.0.11
     ports:
       - "8080:80"
+
+networks:
+  quantum_chess_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
