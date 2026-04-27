@@ -88,6 +88,39 @@ class ApiTest(unittest.TestCase):
         self.assertIsNone(payload["board"]["d4"])
         self.assertEqual(payload["probabilities"]["d4"], 0.0)
 
+    def test_snapshot_includes_new_fields(self):
+        response = self.client.get("/game")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("in_check", payload)
+        self.assertFalse(payload["in_check"])
+        self.assertIn("game_status", payload)
+        self.assertEqual(payload["game_status"], "ongoing")
+        self.assertIn("promotion_pending", payload)
+        self.assertFalse(payload["promotion_pending"])
+        self.assertIsNone(payload["promotion_square"])
+        self.assertIn("legal_moves", payload)
+        self.assertEqual(len(payload["legal_moves"]), 20)
+
+    def test_snapshot_legal_moves_update_after_move(self):
+        self.client.post("/game/move/classical", json={"src": "b1", "target": "c3"})
+        response = self.client.get("/game")
+        payload = response.json()
+        self.assertEqual(payload["side_to_move"], "black")
+        self.assertEqual(len(payload["legal_moves"]), 20)
+
+    def test_snapshot_promotion_pending_after_pawn_reaches_back_rank(self):
+        from api.state_store import store
+        from engine.board_state import BoardState
+        from engine.game_state import QuantumGame
+        basis = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
+        store._game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        self.client.post("/game/move/classical", json={"src": "e7", "target": "e8"})
+        response = self.client.get("/game")
+        payload = response.json()
+        self.assertTrue(payload["promotion_pending"])
+        self.assertEqual(payload["promotion_square"], "e8")
+
 
 if __name__ == "__main__":
     unittest.main()
