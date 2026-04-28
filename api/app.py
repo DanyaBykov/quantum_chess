@@ -16,6 +16,7 @@ from api.schemas import (
     GameSnapshot,
     MeasureRequest,
     MergeMoveRequest,
+    PromoteRequest,
     SplitMoveRequest,
 )
 from api.state_store import snapshot_game, store
@@ -62,6 +63,16 @@ def apply_merge_move(payload: MergeMoveRequest) -> GameSnapshot:
     game = store.get_game()
     try:
         game.apply_merge_move(payload.src_a, payload.src_b, payload.target)
+    except ValueError as exc:
+        _handle_engine_error(exc)
+    return snapshot_game(game)
+
+
+@app.post("/game/move/promote", response_model=GameSnapshot)
+def apply_promotion(payload: PromoteRequest) -> GameSnapshot:
+    game = store.get_game()
+    try:
+        game.apply_promotion(payload.piece)
     except ValueError as exc:
         _handle_engine_error(exc)
     return snapshot_game(game)

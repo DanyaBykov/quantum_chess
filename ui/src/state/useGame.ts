@@ -106,11 +106,25 @@ export function useGame() {
     }
   }
 
+  async function promote(piece: string) {
+    setLoading(true);
+    try {
+      const nextSnapshot = await gameClient.promote({ piece });
+      setSnapshot(nextSnapshot);
+      setError(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Promotion failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return {
     snapshot,
     loading,
     error,
     reset,
     execute,
+    promote,
   };
 }

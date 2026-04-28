@@ -1,50 +1,182 @@
-.board {
+/* board-section has container-type: size (set in styles.css via .board-section) */
+
+.board-wrap {
+  /* Square that fills available space in both axes */
+  width: min(100cqw, 100cqh);
+  height: min(100cqw, 100cqh);
+  /* Nested container for piece font sizing */
+  container-type: size;
+  container-name: board;
+
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 0.3rem;
+  grid-template-columns: 16px 1fr;
+  grid-template-rows: 1fr 16px;
+  gap: 0;
+  user-select: none;
 }
+
+.board-ranks {
+  grid-column: 1;
+  grid-row: 1;
+  display: grid;
+  grid-template-rows: repeat(8, 1fr);
+  align-items: center;
+  padding-right: 3px;
+}
+
+.board-rank-label {
+  font-family: var(--font-mono);
+  font-size: clamp(0.45rem, 1.5cqmin, 0.65rem);
+  color: var(--text-muted);
+  text-align: right;
+  line-height: 1;
+}
+
+.board-files {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  padding-top: 3px;
+}
+
+.board-file-label {
+  font-family: var(--font-mono);
+  font-size: clamp(0.45rem, 1.5cqmin, 0.65rem);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1;
+}
+
+.board {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+/* ── Square ── */
 
 .square {
   position: relative;
   aspect-ratio: 1;
   border: 0;
-  border-radius: 0.9rem;
-  padding: 0.4rem;
-  color: #0f172a;
-  text-align: left;
+  padding: 0;
   cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: filter 0.1s;
 }
 
-.square-light {
-  background: #f4f0e8;
+.square:hover { filter: brightness(1.14); }
+
+.square-light { background: var(--board-light); }
+.square-dark  { background: var(--board-dark); }
+
+/* ── Selected ── */
+
+.square-selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 3px var(--amber);
+  pointer-events: none;
+  z-index: 3;
 }
 
-.square-dark {
-  background: #c9b18f;
+/* ── Check highlight ── */
+
+.square-in-check {
+  background: #6b1515 !important;
+  animation: check-pulse 0.75s ease-in-out infinite alternate;
 }
 
-.square-selected {
-  outline: 3px solid #d9480f;
+@keyframes check-pulse {
+  from { background-color: #6b1515; }
+  to   { background-color: #4d0e0e; }
 }
+
+/* ── Quantum heat overlay ── */
+
+.square-heat {
+  position: absolute;
+  inset: 0;
+  background: rgba(34, 211, 238, var(--heat-opacity, 0));
+  pointer-events: none;
+  z-index: 1;
+  transition: background 0.3s;
+}
+
+/* ── Legal move indicators ── */
+
+.sq-legal-dot,
+.sq-legal-ring {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sq-legal-dot::after {
+  content: "";
+  width: 30%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.sq-legal-ring::after {
+  content: "";
+  position: absolute;
+  inset: 10%;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 0, 0, 0.22);
+}
+
+/* ── Piece glyph ── */
 
 .square-piece {
+  position: relative;
+  z-index: 2;
+  /* Scale with board size via container query from board-wrap */
+  font-size: 7.5cqmin;
+  line-height: 1;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
   display: block;
-  font-size: 1.6rem;
-  font-weight: 700;
+  width: 100%;
+  text-align: center;
 }
 
-.square-probability,
-.square-name {
+/* Ghost indicator: square has quantum occupation but no single definite piece */
+.square-ghost .square-piece {
+  opacity: 0.45;
+  font-size: 5cqmin;
+  color: var(--cyan);
+  text-shadow: 0 0 8px var(--cyan);
+}
+
+/* ── Probability label ── */
+
+.square-prob {
   position: absolute;
-  font-size: 0.75rem;
-}
-
-.square-probability {
-  top: 0.4rem;
-  right: 0.45rem;
-}
-
-.square-name {
-  bottom: 0.35rem;
-  left: 0.45rem;
+  top: 2px;
+  right: 3px;
+  font-family: var(--font-mono);
+  font-size: 1.8cqmin;
+  line-height: 1;
+  color: rgba(34, 211, 238, 0.9);
+  pointer-events: none;
+  z-index: 4;
+  font-weight: 700;
 }

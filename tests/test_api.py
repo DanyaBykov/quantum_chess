@@ -120,6 +120,41 @@ class ApiTest(unittest.TestCase):
         payload = response.json()
         self.assertTrue(payload["promotion_pending"])
         self.assertEqual(payload["promotion_square"], "e8")
+        self.assertEqual(payload["legal_moves"], [])
+
+    def test_promote_endpoint_replaces_pawn_and_advances_turn(self):
+        from engine.board_state import BoardState
+        from engine.game_state import QuantumGame
+        basis = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
+        store._game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        self.client.post("/game/move/classical", json={"src": "e7", "target": "e8"})
+
+        response = self.client.post("/game/move/promote", json={"piece": "Q"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["board"]["e8"], "Q")
+        self.assertFalse(payload["promotion_pending"])
+        self.assertIsNone(payload["promotion_square"])
+        self.assertEqual(payload["side_to_move"], "black")
+
+    def test_promote_endpoint_returns_400_for_invalid_piece(self):
+        from engine.board_state import BoardState
+        from engine.game_state import QuantumGame
+        basis = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
+        store._game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        self.client.post("/game/move/classical", json={"src": "e7", "target": "e8"})
+
+        response = self.client.post("/game/move/promote", json={"piece": "K"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("invalid promotion piece", response.json()["detail"])
+
+    def test_promote_endpoint_returns_400_when_no_promotion_pending(self):
+        response = self.client.post("/game/move/promote", json={"piece": "Q"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("no promotion is pending", response.json()["detail"])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
 
@@ -8,6 +8,11 @@ class GameSnapshot(BaseModel):
     probabilities: Dict[str, float]
     side_to_move: Literal["white", "black"]
     fullmove_number: int
+    in_check: bool
+    game_status: Literal["ongoing", "checkmate", "stalemate"]
+    promotion_pending: bool
+    promotion_square: Optional[str]
+    legal_moves: List[Tuple[str, str]]
 
 
 class ClassicalMoveRequest(BaseModel):
@@ -29,3 +34,7 @@ class MergeMoveRequest(BaseModel):
 
 class MeasureRequest(BaseModel):
     target: str
+
+
+class PromoteRequest(BaseModel):
+    piece: str

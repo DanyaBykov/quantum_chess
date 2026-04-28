@@ -7,16 +7,39 @@ interface StatusPanelProps {
 }
 
 export function StatusPanel({ snapshot, loading, error }: StatusPanelProps) {
+  const status = snapshot?.game_status ?? "ongoing";
+  const inCheck = snapshot?.in_check ?? false;
+  const legalCount = snapshot?.legal_moves?.length ?? 0;
+
   return (
     <section className="panel">
-      <h2>Status</h2>
-      <p>Side to move: {snapshot?.side_to_move ?? "loading"}</p>
-      <p>Fullmove: {snapshot?.fullmove_number ?? "-"}</p>
-      <p>{loading ? "Synchronizing game state..." : "Ready"}</p>
+      <p className="panel-title">Game state</p>
+
+      <div className="status-row">
+        <span className="status-label">Status</span>
+        <span className={["status-value", status !== "ongoing" ? "status-value-check" : "status-value-ok"].join(" ")}>
+          {loading ? "sync…" : status}
+        </span>
+      </div>
+
+      <div className="status-row">
+        <span className="status-label">Check</span>
+        <span className={["status-value", inCheck ? "status-value-check" : ""].join(" ")}>
+          {inCheck ? "YES" : "—"}
+        </span>
+      </div>
+
+      <div className="status-row">
+        <span className="status-label">Legal moves</span>
+        <span className="status-value">{snapshot ? legalCount : "—"}</span>
+      </div>
+
       {error ? (
-        <p role="alert" className="error-text">
-          {error}
-        </p>
+        <div className="status-row" style={{ borderTop: "1px solid var(--border)", marginTop: "0.4rem" }}>
+          <span style={{ fontSize: "0.72rem", color: "var(--red)", fontFamily: "var(--font-mono)" }}>
+            {error}
+          </span>
+        </div>
       ) : null}
     </section>
   );
