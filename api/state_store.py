@@ -43,14 +43,22 @@ def snapshot_game(game: QuantumGame) -> GameSnapshot:
             promotion_square=game.promotion_square,
             legal_moves=[],
         )
+    cr = game.castling_rights
+    ep = game.en_passant_target
     return GameSnapshot(
         board=board,
         probabilities=probabilities,
         side_to_move=game.side_to_move,
         fullmove_number=game.fullmove_number,
         in_check=is_in_check(game.board_state, game.side_to_move),
-        game_status=compute_game_status(game.board_state, game.side_to_move),
+        game_status=compute_game_status(
+            game.board_state, game.side_to_move,
+            castling_rights=cr, en_passant_target=ep,
+        ),
         promotion_pending=False,
         promotion_square=None,
-        legal_moves=legal_moves_for(game.board_state, game.side_to_move),
+        legal_moves=legal_moves_for(
+            game.board_state, game.side_to_move,
+            castling_rights=cr, en_passant_target=ep,
+        ),
     )

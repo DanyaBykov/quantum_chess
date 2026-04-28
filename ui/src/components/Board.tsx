@@ -12,13 +12,13 @@ const PIECE_GLYPHS: Record<string, string> = {
 
 interface BoardProps {
   snapshot: GameSnapshot | null;
-  selectedSquares: string[];
+  sourceSquares: string[];
   legalTargets: string[];
   inCheckSquare: string | null;
   onSelectSquare: (square: string) => void;
 }
 
-export function Board({ snapshot, selectedSquares, legalTargets, inCheckSquare, onSelectSquare }: BoardProps) {
+export function Board({ snapshot, sourceSquares, legalTargets, inCheckSquare, onSelectSquare }: BoardProps) {
   return (
     <div className="board-wrap">
       <div className="board-ranks" aria-hidden="true">
@@ -33,7 +33,7 @@ export function Board({ snapshot, selectedSquares, legalTargets, inCheckSquare, 
             const square = `${file}${rank}`;
             const piece = snapshot?.board[square] ?? null;
             const probability = snapshot?.probabilities[square] ?? 0;
-            const isSelected = selectedSquares.includes(square);
+            const isSelected = sourceSquares.includes(square);
             const isInCheck = square === inCheckSquare;
             const isLegalTarget = legalTargets.includes(square);
             const isDark = (Number(rank) + fileIdx) % 2 === 0;

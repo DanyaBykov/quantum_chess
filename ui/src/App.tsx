@@ -39,8 +39,15 @@ function computeLegalTargets(mode: ActionMode, selected: string[], snapshot: Gam
 
   if (mode === "split") {
     if (selected.length === 0) return [];
-    // Valid destinations for the split source (same move rules as classical)
-    const targets = legalMoves.filter(([src]) => src === selected[0]).map(([, tgt]) => tgt);
+    const srcPiece = board[selected[0]];
+    const isSrcKing = srcPiece === "K" || srcPiece === "k";
+    const srcFile = selected[0].charCodeAt(0) - 97;
+    // Filter legal moves for the source, excluding castling destinations for kings
+    // (castling requires the rook to move simultaneously — not valid as a split target)
+    const targets = legalMoves
+      .filter(([src]) => src === selected[0])
+      .map(([, tgt]) => tgt)
+      .filter((tgt) => !isSrcKing || Math.abs(tgt.charCodeAt(0) - 97 - srcFile) !== 2);
     // Once first target is picked, exclude it from second-target highlights
     return selected.length >= 2 ? targets.filter((sq) => sq !== selected[1]) : targets;
   }
@@ -84,6 +91,8 @@ export default function App() {
 
   const legalTargets = computeLegalTargets(mode, selected, snapshot);
 
+  const sourceSquares = mode === "merge" ? selected.slice(0, 2) : selected.slice(0, 1);
+
   function handleModeChange(next: ActionMode) {
     setMode(next);
     setSelected([]);
@@ -107,6 +116,10 @@ export default function App() {
         setSelected([sq]);
         return;
       }
+      // No source selected yet — only a friendly piece can start a selection
+      if (selected.length === 0) return;
+      // Only allow clicks on highlighted legal destinations
+      if (!legalTargets.includes(sq)) return;
       setSelected((cur) => trimSelections(mode, cur, sq));
       return;
     }
@@ -203,7 +216,7 @@ export default function App() {
           <div className="board-section">
             <Board
               snapshot={snapshot}
-              selectedSquares={selected}
+              sourceSquares={sourceSquares}
               legalTargets={legalTargets}
               inCheckSquare={inCheckSquare}
               onSelectSquare={handleSelectSquare}

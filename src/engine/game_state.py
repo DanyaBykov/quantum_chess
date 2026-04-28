@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from engine.board_state import BoardState, BasisState, parse_square, square_name
@@ -50,6 +50,7 @@ def _is_legal_piece_move(
     basis: BasisState,
     *,
     allow_empty_target_for_pawn_diagonal: bool = False,
+    en_passant_idx: Optional[int] = None,
 ) -> bool:
     if _same_square(src_idx, tgt_idx):
         return False
@@ -67,7 +68,20 @@ def _is_legal_piece_move(
         return (abs_file, abs_rank) in {(1, 2), (2, 1)}
 
     if lower_piece == "k":
-        return max(abs_file, abs_rank) == 1
+        if max(abs_file, abs_rank) == 1:
+            return True
+        # Castling: king moves 2 squares horizontally from starting position
+        if rank_delta == 0 and abs_file == 2:
+            src_rank = src_idx // 8
+            expected_rank = 0 if piece.isupper() else 7
+            if src_rank != expected_rank or src_idx % 8 != 4:
+                return False
+            rook_piece = "R" if piece.isupper() else "r"
+            rook_src = src_rank * 8 + (7 if file_delta > 0 else 0)
+            if basis[rook_src] != rook_piece:
+                return False
+            return _path_is_clear(basis, src_idx, rook_src)
+        return False
 
     if lower_piece == "b":
         return abs_file == abs_rank and _path_is_clear(basis, src_idx, tgt_idx)
@@ -92,17 +106,47 @@ def _is_legal_piece_move(
             and target_piece is None
             and _path_is_clear(basis, src_idx, tgt_idx)
         )
-        diagonal_capture = (
-            abs_file == 1
-            and rank_delta == direction
-            and (
-                (target_piece is not None and _piece_color(target_piece) != _piece_color(piece))
-                or allow_empty_target_for_pawn_diagonal
-            )
+        diagonal_capture = abs_file == 1 and rank_delta == direction and (
+            (target_piece is not None and _piece_color(target_piece) != _piece_color(piece))
+            or allow_empty_target_for_pawn_diagonal
+            or (en_passant_idx is not None and tgt_idx == en_passant_idx)
         )
         return one_step or two_step or diagonal_capture
 
     return False
+
+
+def _apply_move_to_basis(
+    basis: list,
+    src_idx: int,
+    tgt_idx: int,
+    en_passant_idx: Optional[int],
+) -> None:
+    """Apply a move with its implicit side-effects to a mutable basis list in-place."""
+    piece = basis[src_idx]
+    basis[tgt_idx] = piece
+    basis[src_idx] = None
+
+    if piece is None:
+        return
+
+    # En passant: remove captured pawn from its actual square (adjacent to landing square)
+    if piece.lower() == "p" and en_passant_idx is not None and tgt_idx == en_passant_idx:
+        direction = 1 if piece.isupper() else -1
+        captured_rank = (en_passant_idx // 8) - direction
+        basis[captured_rank * 8 + (en_passant_idx % 8)] = None
+
+    # Castling: move rook alongside the king
+    if piece.lower() == "k":
+        file_delta = (tgt_idx % 8) - (src_idx % 8)
+        if abs(file_delta) == 2:
+            rank = src_idx // 8
+            if file_delta > 0:  # kingside: rook h→f
+                basis[rank * 8 + 5] = basis[rank * 8 + 7]
+                basis[rank * 8 + 7] = None
+            else:              # queenside: rook a→d
+                basis[rank * 8 + 3] = basis[rank * 8 + 0]
+                basis[rank * 8 + 0] = None
 
 
 def validate_move_on_basis(
@@ -111,6 +155,8 @@ def validate_move_on_basis(
     target: str,
     *,
     allow_empty_target_for_pawn_diagonal: bool = False,
+    en_passant_idx: Optional[int] = None,
+    castling_rights: Optional[dict] = None,
 ) -> str:
     src_idx = parse_square(src)
     tgt_idx = parse_square(target)
@@ -118,12 +164,22 @@ def validate_move_on_basis(
     if piece is None:
         raise ValueError(f"no piece at source square {src}")
 
+    # Check castling rights before the board-geometry test
+    if piece.lower() == "k" and castling_rights is not None:
+        file_delta = (tgt_idx % 8) - (src_idx % 8)
+        if abs(file_delta) == 2:
+            side = "white" if piece.isupper() else "black"
+            flank = "kingside" if file_delta > 0 else "queenside"
+            if not castling_rights.get(f"{side}_{flank}", False):
+                raise ValueError(f"castling rights lost: {side} {flank}")
+
     if not _is_legal_piece_move(
         piece,
         src_idx,
         tgt_idx,
         basis,
         allow_empty_target_for_pawn_diagonal=allow_empty_target_for_pawn_diagonal,
+        en_passant_idx=en_passant_idx,
     ):
         raise ValueError(f"illegal move for {piece} from {src} to {target}")
 
@@ -153,12 +209,10 @@ def _king_square(basis: BasisState, color: str) -> Optional[int]:
 
 
 def is_in_check(state: BoardState, color: str) -> bool:
-    """Return True if color's king is attacked in ANY basis state of the given superposition."""
+    """Return True if color's king is attacked in ANY basis state of the superposition."""
     opponent_color = "black" if color == "white" else "white"
     for basis in state.amplitudes:
         king_idx = _king_square(basis, color)
-        # King absent in this basis: stripped test positions or an already-collapsed branch.
-        # A kingless basis contributes no check.
         if king_idx is None:
             continue
         for src_idx, piece in enumerate(basis):
@@ -174,15 +228,23 @@ def is_in_check(state: BoardState, color: str) -> bool:
 _ALL_SQUARES: list[str] = [square_name(idx) for idx in range(64)]
 
 
-def legal_moves_for(state: BoardState, color: str) -> list[tuple[str, str]]:
+def legal_moves_for(
+    state: BoardState,
+    color: str,
+    *,
+    castling_rights: Optional[dict] = None,
+    en_passant_target: Optional[str] = None,
+) -> list[tuple[str, str]]:
     """Return all legal (src, target) move pairs for the given color.
 
     A move is legal if:
     - The color has a piece at src in at least one basis state.
     - validate_move_on_basis succeeds on every occupied basis state for src.
     - The modified branches after the move do not leave color's king in check.
+    - For castling: king is not currently in check, and does not pass through check.
     """
-    # Collect source squares where color has a piece in any basis state
+    ep_idx = parse_square(en_passant_target) if en_passant_target else None
+
     src_squares: set[str] = set()
     for basis in state.amplitudes:
         for idx, piece in enumerate(basis):
@@ -208,11 +270,14 @@ def legal_moves_for(state: BoardState, color: str) -> list[tuple[str, str]]:
 
             tgt_idx = parse_square(target)
 
-            # Check if the move is valid on every occupied basis state
             valid = True
             for basis, _ in occupied_bases:
                 try:
-                    validate_move_on_basis(basis, src, target)
+                    validate_move_on_basis(
+                        basis, src, target,
+                        en_passant_idx=ep_idx,
+                        castling_rights=castling_rights,
+                    )
                 except ValueError:
                     valid = False
                     break
@@ -220,42 +285,86 @@ def legal_moves_for(state: BoardState, color: str) -> list[tuple[str, str]]:
             if not valid:
                 continue
 
-            # Build the modified branches after this move
+            # Build modified branches including castling rook and en passant pawn removal
             modified: dict = {}
             for basis, amp in occupied_bases:
                 moved = list(basis)
-                moved[tgt_idx] = moved[src_idx]
-                moved[src_idx] = None
+                _apply_move_to_basis(moved, src_idx, tgt_idx, ep_idx)
                 moved_t = tuple(moved)
                 modified[moved_t] = modified.get(moved_t, 0j) + amp
 
             if not modified:
                 continue
 
-            # Self-check guard scoped to modified branches only
             trial = BoardState(amplitudes=dict(modified), entanglement_map=state.entanglement_map)
             trial.normalize()
             if is_in_check(trial, color):
                 continue
+
+            # Castling extra guards: not while in check, not through check
+            piece_at_src = occupied_bases[0][0][src_idx]
+            if piece_at_src is not None and piece_at_src.lower() == "k":
+                file_delta = (tgt_idx % 8) - (src_idx % 8)
+                if abs(file_delta) == 2:
+                    if is_in_check(state, color):
+                        continue
+                    pass_idx = src_idx + (1 if file_delta > 0 else -1)
+                    pass_modified: dict = {}
+                    for basis, amp in occupied_bases:
+                        moved2 = list(basis)
+                        moved2[pass_idx] = moved2[src_idx]
+                        moved2[src_idx] = None
+                        moved2_t = tuple(moved2)
+                        pass_modified[moved2_t] = pass_modified.get(moved2_t, 0j) + amp
+                    if pass_modified:
+                        pass_trial = BoardState(
+                            amplitudes=dict(pass_modified),
+                            entanglement_map=state.entanglement_map,
+                        )
+                        pass_trial.normalize()
+                        if is_in_check(pass_trial, color):
+                            continue
 
             result.append((src, target))
 
     return result
 
 
-def game_status(state: BoardState, side_to_move: str) -> str:
-    """Return the game status for the side to move.
-
-    Returns:
-        "ongoing"   — the side has at least one legal move
-        "checkmate" — the side has no legal moves and is in check
-        "stalemate" — the side has no legal moves and is not in check
-    """
-    if legal_moves_for(state, side_to_move):
+def game_status(
+    state: BoardState,
+    side_to_move: str,
+    *,
+    castling_rights: Optional[dict] = None,
+    en_passant_target: Optional[str] = None,
+) -> str:
+    """Return 'ongoing', 'checkmate', or 'stalemate' for the side to move."""
+    if legal_moves_for(
+        state, side_to_move,
+        castling_rights=castling_rights,
+        en_passant_target=en_passant_target,
+    ):
         return "ongoing"
     if is_in_check(state, side_to_move):
         return "checkmate"
     return "stalemate"
+
+
+_CASTLING_INITIAL = {
+    "white_kingside": True,
+    "white_queenside": True,
+    "black_kingside": True,
+    "black_queenside": True,
+}
+
+# Squares whose occupant moving revokes the associated castling right(s)
+_CASTLING_REVOKE_MAP: dict[int, list[str]] = {
+    parse_square("e1"): ["white_kingside", "white_queenside"],
+    parse_square("h1"): ["white_kingside"],
+    parse_square("a1"): ["white_queenside"],
+    parse_square("e8"): ["black_kingside", "black_queenside"],
+    parse_square("h8"): ["black_kingside"],
+    parse_square("a8"): ["black_queenside"],
+}
 
 
 @dataclass
@@ -265,6 +374,8 @@ class QuantumGame:
     fullmove_number: int = 1
     promotion_pending: bool = False
     promotion_square: Optional[str] = None
+    castling_rights: dict = field(default_factory=lambda: dict(_CASTLING_INITIAL))
+    en_passant_target: Optional[str] = None
 
     @classmethod
     def initial(cls) -> "QuantumGame":
@@ -281,9 +392,12 @@ class QuantumGame:
         if self.side_to_move == "white":
             self.side_to_move = "black"
             return
-
         self.side_to_move = "white"
         self.fullmove_number += 1
+
+    def _revoke_castling_rights(self, square_idx: int) -> None:
+        for right in _CASTLING_REVOKE_MAP.get(square_idx, []):
+            self.castling_rights[right] = False
 
     def apply_classical_move(self, src: str, target: str):
         if self.promotion_pending:
@@ -297,13 +411,18 @@ class QuantumGame:
             raise ValueError(f"no piece present at {src}")
 
         self._assert_side_to_move(piece)
+
+        ep_idx = parse_square(self.en_passant_target) if self.en_passant_target else None
         for basis in occupied_bases:
-            validate_move_on_basis(basis, src, target)
+            validate_move_on_basis(
+                basis, src, target,
+                en_passant_idx=ep_idx,
+                castling_rights=self.castling_rights,
+            )
 
         src_idx = parse_square(src)
         tgt_idx = parse_square(target)
 
-        # Separate branches where the piece is present (modified) from those where it isn't
         modified: dict = {}
         unmodified: dict = {}
         for basis, amplitude in self.board_state.amplitudes.items():
@@ -311,13 +430,10 @@ class QuantumGame:
                 unmodified[basis] = amplitude
                 continue
             moved = list(basis)
-            moved[tgt_idx] = moved[src_idx]
-            moved[src_idx] = None
+            _apply_move_to_basis(moved, src_idx, tgt_idx, ep_idx)
             moved_t = tuple(moved)
             modified[moved_t] = modified.get(moved_t, 0j) + amplitude
 
-        # Self-check guard scoped to modified branches only — unmodified branches may have
-        # pre-existing check states from earlier quantum operations that this move didn't touch
         if modified:
             trial = BoardState(
                 amplitudes=dict(modified),
@@ -334,10 +450,20 @@ class QuantumGame:
         )
         self.board_state.normalize()
 
+        # Revoke rights for the moved piece and for any rook captured on its home square
+        self._revoke_castling_rights(src_idx)
+        self._revoke_castling_rights(tgt_idx)
+
+        # Track en passant target for opponent's next move
+        if piece.lower() == "p" and abs(tgt_idx - src_idx) == 16:
+            self.en_passant_target = square_name((src_idx + tgt_idx) // 2)
+        else:
+            self.en_passant_target = None
+
         if (piece == "P" and tgt_idx // 8 == 7) or (piece == "p" and tgt_idx // 8 == 0):
             self.promotion_pending = True
             self.promotion_square = target
-            return  # do NOT advance turn yet
+            return
 
         self._advance_turn()
 
@@ -351,28 +477,19 @@ class QuantumGame:
         self._assert_side_to_move(piece)
 
         occupied_bases = list(_occupied_basis_states(self.board_state, src))
+        # castling_rights={} prevents a king from treating a 2-square move as castling;
+        # split/merge never move the rook, so castling is disallowed in these modes.
         for basis in occupied_bases:
-            validate_move_on_basis(
-                basis,
-                src,
-                target_a,
-                allow_empty_target_for_pawn_diagonal=False,
-            )
-            validate_move_on_basis(
-                basis,
-                src,
-                target_b,
-                allow_empty_target_for_pawn_diagonal=False,
-            )
+            validate_move_on_basis(basis, src, target_a, castling_rights={})
+            validate_move_on_basis(basis, src, target_b, castling_rights={})
 
-        # Prevent pawns splitting to a promotion rank — promotion via split is not supported
-        piece_lower = piece.lower()
-        if piece_lower == "p":
-            ta_rank = parse_square(target_a) // 8
-            tb_rank = parse_square(target_b) // 8
+        if piece.lower() == "p":
             back_rank = 7 if piece.isupper() else 0
-            if ta_rank == back_rank or tb_rank == back_rank:
+            if parse_square(target_a) // 8 == back_rank or parse_square(target_b) // 8 == back_rank:
                 raise ValueError("pawn cannot split to promotion rank")
+
+        self._revoke_castling_rights(parse_square(src))
+        self.en_passant_target = None
 
         self.board_state = split_move(self.board_state, src, target_a, target_b)
         self.board_state.normalize()
@@ -395,18 +512,20 @@ class QuantumGame:
 
         for basis in occupied_a:
             validate_move_on_basis(
-                basis,
-                src_a,
-                target,
+                basis, src_a, target,
                 allow_empty_target_for_pawn_diagonal=piece_a.lower() == "p",
+                castling_rights={},
             )
         for basis in occupied_b:
             validate_move_on_basis(
-                basis,
-                src_b,
-                target,
+                basis, src_b, target,
                 allow_empty_target_for_pawn_diagonal=piece_b.lower() == "p",
+                castling_rights={},
             )
+
+        self._revoke_castling_rights(parse_square(src_a))
+        self._revoke_castling_rights(parse_square(src_b))
+        self.en_passant_target = None
 
         self.board_state = merge_move(self.board_state, src_a, src_b, target)
         self._advance_turn()

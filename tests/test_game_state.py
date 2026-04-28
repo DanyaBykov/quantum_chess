@@ -295,5 +295,180 @@ class PromotionTest(unittest.TestCase):
             game.apply_merge_move("b1", "c3", "d2")
 
 
+class CastlingTest(unittest.TestCase):
+    def _kingside_setup(self, color: str) -> QuantumGame:
+        """King and kingside rook only — path already clear."""
+        if color == "white":
+            basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k"})
+        else:
+            basis = BoardState._board_to_tuple({"e8": "k", "h8": "r", "e1": "K"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis: 1 + 0j}),
+            side_to_move=color,
+        )
+        return game
+
+    def _queenside_setup(self, color: str) -> QuantumGame:
+        if color == "white":
+            basis = BoardState._board_to_tuple({"e1": "K", "a1": "R", "e8": "k"})
+        else:
+            basis = BoardState._board_to_tuple({"e8": "k", "a8": "r", "e1": "K"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis: 1 + 0j}),
+            side_to_move=color,
+        )
+        return game
+
+    def test_white_kingside_castle_moves_king_and_rook(self):
+        game = self._kingside_setup("white")
+        game.apply_classical_move("e1", "g1")
+        self.assertEqual(game.piece_at("g1"), "K")
+        self.assertEqual(game.piece_at("f1"), "R")
+        self.assertIsNone(game.piece_at("e1"))
+        self.assertIsNone(game.piece_at("h1"))
+
+    def test_white_queenside_castle_moves_king_and_rook(self):
+        game = self._queenside_setup("white")
+        game.apply_classical_move("e1", "c1")
+        self.assertEqual(game.piece_at("c1"), "K")
+        self.assertEqual(game.piece_at("d1"), "R")
+        self.assertIsNone(game.piece_at("e1"))
+        self.assertIsNone(game.piece_at("a1"))
+
+    def test_black_kingside_castle_moves_king_and_rook(self):
+        game = self._kingside_setup("black")
+        game.apply_classical_move("e8", "g8")
+        self.assertEqual(game.piece_at("g8"), "k")
+        self.assertEqual(game.piece_at("f8"), "r")
+        self.assertIsNone(game.piece_at("e8"))
+        self.assertIsNone(game.piece_at("h8"))
+
+    def test_black_queenside_castle_moves_king_and_rook(self):
+        game = self._queenside_setup("black")
+        game.apply_classical_move("e8", "c8")
+        self.assertEqual(game.piece_at("c8"), "k")
+        self.assertEqual(game.piece_at("d8"), "r")
+        self.assertIsNone(game.piece_at("e8"))
+        self.assertIsNone(game.piece_at("a8"))
+
+    def test_castle_blocked_by_piece_in_path(self):
+        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "f1": "B", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        with self.assertRaisesRegex(ValueError, "illegal move"):
+            game.apply_classical_move("e1", "g1")
+
+    def test_castle_not_in_legal_moves_when_king_in_check(self):
+        # King is under attack — castling must not appear in legal moves
+        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k", "e5": "r"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        rights = {"white_kingside": True, "white_queenside": True,
+                  "black_kingside": True, "black_queenside": True}
+        moves = legal_moves_for(state, "white", castling_rights=rights)
+        self.assertNotIn(("e1", "g1"), moves)
+
+    def test_castle_not_in_legal_moves_when_passing_through_attacked_square(self):
+        # Black rook attacks f1 — white cannot castle kingside (king passes through f1)
+        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k", "f5": "r"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        rights = {"white_kingside": True, "white_queenside": True,
+                  "black_kingside": True, "black_queenside": True}
+        moves = legal_moves_for(state, "white", castling_rights=rights)
+        self.assertNotIn(("e1", "g1"), moves)
+
+    def test_castling_rights_revoked_after_king_moves(self):
+        game = self._kingside_setup("white")
+        game.apply_classical_move("e1", "f1")  # normal king move
+        # Now try to move back and castle — rights should be gone
+        game.side_to_move = "white"
+        game.apply_classical_move("f1", "e1")
+        game.side_to_move = "white"
+        self.assertFalse(game.castling_rights["white_kingside"])
+        with self.assertRaisesRegex(ValueError, "castling rights lost"):
+            game.apply_classical_move("e1", "g1")
+
+    def test_castling_rights_revoked_after_rook_moves(self):
+        game = self._kingside_setup("white")
+        game.apply_classical_move("h1", "g1")  # rook moves
+        game.side_to_move = "white"
+        game.apply_classical_move("g1", "h1")  # rook returns
+        game.side_to_move = "white"
+        self.assertFalse(game.castling_rights["white_kingside"])
+        with self.assertRaisesRegex(ValueError, "castling rights lost"):
+            game.apply_classical_move("e1", "g1")
+
+    def test_castling_rights_revoked_for_king_after_split(self):
+        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k", "f1": None, "d1": None})
+        # Give king squares to split to
+        basis2 = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis2: 1 + 0j}))
+        # Split king to d1 and f1 — both must be reachable
+        game.apply_split_move("e1", "d1", "f1")
+        self.assertFalse(game.castling_rights["white_kingside"])
+        self.assertFalse(game.castling_rights["white_queenside"])
+
+
+class EnPassantTest(unittest.TestCase):
+    def test_en_passant_target_set_after_two_step_pawn_move(self):
+        basis = BoardState._board_to_tuple({"e2": "P", "e1": "K", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        game.apply_classical_move("e2", "e4")
+        self.assertEqual(game.en_passant_target, "e3")
+
+    def test_en_passant_target_cleared_after_non_two_step_move(self):
+        basis = BoardState._board_to_tuple({"e4": "P", "e1": "K", "e8": "k"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis: 1 + 0j}),
+            en_passant_target="e3",
+        )
+        game.apply_classical_move("e4", "e5")
+        self.assertIsNone(game.en_passant_target)
+
+    def test_white_captures_en_passant(self):
+        # Black pawn just moved d7→d5; white pawn at e5 can capture en passant to d6
+        basis = BoardState._board_to_tuple({"e5": "P", "d5": "p", "e1": "K", "e8": "k"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis: 1 + 0j}),
+            en_passant_target="d6",
+        )
+        game.apply_classical_move("e5", "d6")
+        self.assertEqual(game.piece_at("d6"), "P")
+        self.assertIsNone(game.piece_at("e5"))
+        self.assertIsNone(game.piece_at("d5"))  # captured pawn removed
+
+    def test_black_captures_en_passant(self):
+        # White pawn just moved e2→e4; black pawn at d4 can capture en passant to e3
+        basis = BoardState._board_to_tuple({"d4": "p", "e4": "P", "e1": "K", "e8": "k"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis: 1 + 0j}),
+            side_to_move="black",
+            en_passant_target="e3",
+        )
+        game.apply_classical_move("d4", "e3")
+        self.assertEqual(game.piece_at("e3"), "p")
+        self.assertIsNone(game.piece_at("d4"))
+        self.assertIsNone(game.piece_at("e4"))  # captured white pawn removed
+
+    def test_en_passant_appears_in_legal_moves(self):
+        basis = BoardState._board_to_tuple({"e5": "P", "d5": "p", "e1": "K", "e8": "k"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        moves = legal_moves_for(state, "white", en_passant_target="d6")
+        self.assertIn(("e5", "d6"), moves)
+
+    def test_en_passant_not_in_legal_moves_without_target(self):
+        basis = BoardState._board_to_tuple({"e5": "P", "d5": "p", "e1": "K", "e8": "k"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        moves = legal_moves_for(state, "white")  # no en_passant_target
+        self.assertNotIn(("e5", "d6"), moves)
+
+    def test_en_passant_target_cleared_after_split_move(self):
+        basis = BoardState._board_to_tuple({"b1": "N", "e1": "K", "e8": "k"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis: 1 + 0j}),
+            en_passant_target="e3",
+        )
+        game.apply_split_move("b1", "a3", "c3")
+        self.assertIsNone(game.en_passant_target)
+
+
 if __name__ == "__main__":
     unittest.main()
