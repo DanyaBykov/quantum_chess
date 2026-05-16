@@ -576,26 +576,41 @@ input {
   border-bottom: 0;
 }
 
+.move-row-failed {
+  background: rgba(248, 113, 113, 0.06);
+  border-radius: 0.3rem;
+  padding-left: 0.3rem;
+  margin-left: -0.3rem;
+}
+
 .move-piece {
   font-size: 0.8rem;
   line-height: 1;
   flex-shrink: 0;
 }
 
-.move-notation {
+.move-notation-col {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.move-notation {
   letter-spacing: 0.02em;
   color: var(--text);
 }
 
-.move-outcome-ok {
-  color: var(--green);
-  font-size: 0.65rem;
-  flex-shrink: 0;
+.move-neg-obs {
+  font-size: 0.58rem;
+  color: var(--red);
+  letter-spacing: 0.03em;
+  opacity: 0.85;
 }
 
-.move-outcome-fail {
-  color: var(--red);
+.move-outcome-ok {
+  color: var(--green);
   font-size: 0.65rem;
   flex-shrink: 0;
 }

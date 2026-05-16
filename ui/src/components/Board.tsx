@@ -14,10 +14,11 @@ interface BoardProps {
   snapshot: GameSnapshot | null;
   sourceSquares: string[];
   legalTargets: string[];
+  failedSquare?: string | null;
   onSelectSquare: (square: string) => void;
 }
 
-export function Board({ snapshot, sourceSquares, legalTargets, onSelectSquare }: BoardProps) {
+export function Board({ snapshot, sourceSquares, legalTargets, failedSquare, onSelectSquare }: BoardProps) {
   const sideToMove = snapshot?.side_to_move ?? "white";
 
   return (
@@ -37,9 +38,9 @@ export function Board({ snapshot, sourceSquares, legalTargets, onSelectSquare }:
             const isSelected = sourceSquares.includes(square);
             const isLegalTarget = legalTargets.includes(square);
             const isDark = (Number(rank) + fileIdx) % 2 === 0;
-            const heatOpacity =
-              probability > 0 && probability < 1
-                ? (Math.min(probability, 1 - probability) * 0.8).toFixed(3)
+            const isQuantum = probability > 1e-9 && probability < 1 - 1e-9;
+            const heatOpacity = isQuantum
+                ? (Math.min(probability, 1 - probability) * 0.45).toFixed(3)
                 : "0";
 
             const isFriendly = piece !== null && (
@@ -48,6 +49,8 @@ export function Board({ snapshot, sourceSquares, legalTargets, onSelectSquare }:
             // A square is interactive if it's a friendly piece (potential source)
             // or a highlighted legal destination. Everything else is inert.
             const isInteractive = isFriendly || isLegalTarget;
+
+            const isFailedSquare = square === failedSquare;
 
             return (
               <button
@@ -59,6 +62,7 @@ export function Board({ snapshot, sourceSquares, legalTargets, onSelectSquare }:
                   isSelected ? "square-selected" : "",
                   !piece && probability > 0 ? "square-ghost" : "",
                   !isInteractive ? "square-inert" : "",
+                  isFailedSquare ? "square-capture-failed" : "",
                 ].join(" ")}
                 style={{ "--heat-opacity": heatOpacity } as React.CSSProperties}
                 onClick={() => onSelectSquare(square)}
@@ -70,7 +74,7 @@ export function Board({ snapshot, sourceSquares, legalTargets, onSelectSquare }:
                 <span className="square-piece">
                   {piece ? (PIECE_GLYPHS[piece] ?? piece) : (probability > 0 ? "⚛" : "")}
                 </span>
-                {probability > 0 && probability < 1 ? (
+                {isQuantum ? (
                   <span className="square-prob">{Math.round(probability * 100)}%</span>
                 ) : null}
               </button>

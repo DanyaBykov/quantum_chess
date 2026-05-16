@@ -73,8 +73,11 @@ export default function App() {
   const gameOver = gameStatus !== "ongoing";
 
   const legalTargets = computeLegalTargets(mode, selected, snapshot);
-
   const sourceSquares = mode === "merge" ? selected.slice(0, 2) : selected.slice(0, 1);
+
+  const lastEntry = snapshot?.move_history.at(-1) ?? null;
+  const failedSquare =
+    lastEntry?.outcome === "capture_failed" ? (lastEntry.squares[1] ?? null) : null;
 
   function handleModeChange(next: ActionMode) {
     setMode(next);
@@ -195,6 +198,7 @@ export default function App() {
               snapshot={snapshot}
               sourceSquares={sourceSquares}
               legalTargets={legalTargets}
+              failedSquare={failedSquare}
               onSelectSquare={handleSelectSquare}
             />
           </div>

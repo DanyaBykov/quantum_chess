@@ -11,19 +11,17 @@ function formatNotation(mode: ActionMode, squares: string[]): string {
   return `${squares[0]}→${squares[1]}`;
 }
 
-function OutcomeTag({ outcome }: { outcome: MoveOutcome | null }) {
-  if (outcome === "success") return <span className="move-outcome-ok">✓</span>;
-  if (outcome === "capture_failed") return <span className="move-outcome-fail">✗</span>;
-  return null;
-}
-
 function MoveRow({ entry }: { entry: MoveHistoryEntry }) {
+  const failed = entry.outcome === "capture_failed";
   return (
-    <div className="move-row">
+    <div className={`move-row${failed ? " move-row-failed" : ""}`}>
       <span className={`side-pip side-pip-${entry.side}`} />
       <span className="move-piece">{PIECE_SYMBOLS[entry.piece] ?? entry.piece}</span>
-      <span className="move-notation">{formatNotation(entry.mode, entry.squares)}</span>
-      <OutcomeTag outcome={entry.outcome} />
+      <span className="move-notation-col">
+        <span className="move-notation">{formatNotation(entry.mode, entry.squares)}</span>
+        {failed && <span className="move-neg-obs">⚛ Negative observation</span>}
+      </span>
+      {entry.outcome === "success" && <span className="move-outcome-ok">✓</span>}
     </div>
   );
 }

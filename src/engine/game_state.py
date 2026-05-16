@@ -520,6 +520,11 @@ class QuantumGame:
         piece = _piece_for_quantum_source(self.board_state, src)
         self._assert_side_to_move(piece)
 
+        # Split moves are non-capturing: both targets must be empty across all basis states
+        for sq in (target_a, target_b):
+            if self.board_state.probability(sq) > 1e-9:
+                raise ValueError(f"split target {sq} must be empty (split moves cannot capture)")
+
         occupied_bases = list(_occupied_basis_states(self.board_state, src))
         # ANY-basis: valid if at least one branch allows both split targets
         any_valid = any(
