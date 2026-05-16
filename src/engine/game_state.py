@@ -55,7 +55,12 @@ def _would_move_in_basis(basis: BasisState, src_idx: int, tgt_idx: int, piece: s
     lower = piece.lower()
     if lower in ("b", "r", "q"):
         return _path_is_clear(basis, src_idx, tgt_idx)
-    return True  # knights, kings, pawns have no intermediate squares to block
+    if lower == "k":
+        file_delta = (tgt_idx % 8) - (src_idx % 8)
+        if abs(file_delta) == 2:  # castling — check path between king and rook
+            rook_src = (src_idx // 8) * 8 + (7 if file_delta > 0 else 0)
+            return _path_is_clear(basis, src_idx, rook_src)
+    return True  # knights, pawns, non-castling kings have no intermediate squares to block
 
 
 def _is_legal_piece_move(

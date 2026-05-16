@@ -132,19 +132,19 @@ class BoardState:
         return total_probability
 
     def prune_states(self, threshold: float = 0.001):
+        """Prune basis states with probability < threshold to prevent state explosion.
+        Branches containing a king are never pruned — losing a king branch prematurely
+        would incorrectly end the game.
         """
-        Prunes basis states with probability (amplitude^2) < threshold to prevent 
-        state explosion.
-        """
-        states_to_remove = []
-        for basis_state, amp in self.amplitudes.items():
-            prob = abs(amp)**2
-            if prob < threshold:
-                states_to_remove.append(basis_state)
-                
+        _KINGS = {"K", "k"}
+        states_to_remove = [
+            basis_state
+            for basis_state, amp in self.amplitudes.items()
+            if abs(amp) ** 2 < threshold
+            and not any(p in _KINGS for p in basis_state if p is not None)
+        ]
         for state in states_to_remove:
             del self.amplitudes[state]
-            
         self.normalize()
 
     def normalize(self):

@@ -93,5 +93,31 @@ class BoardStateTest(unittest.TestCase):
         self.assertEqual(basis, _initial_basis_state())
 
 
+class PruneStatesTest(unittest.TestCase):
+    def test_prune_states_preserves_king_branches_below_threshold(self):
+        import math
+        # White king branch has probability 0.0005 — below default threshold of 0.001.
+        # Without the fix, prune_states removes it and _king_probability returns 0,
+        # which would incorrectly end the game.
+        amp_king    = math.sqrt(0.0005) + 0j   # |amp|^2 = 0.0005
+        amp_no_king = math.sqrt(0.9995) + 0j   # |amp|^2 = 0.9995
+
+        basis_with_king    = BoardState._board_to_tuple({"e1": "K", "e8": "k"})
+        basis_without_king = BoardState._board_to_tuple({"e8": "k"})
+
+        state = BoardState(amplitudes={
+            basis_with_king:    amp_king,
+            basis_without_king: amp_no_king,
+        })
+
+        state.prune_states()  # default threshold=0.001 — king branch is at 0.0005
+
+        # King branch must survive — probability > 0
+        self.assertGreater(
+            state.probability("e1"), 0,
+            "King branch must not be pruned even when its probability is below threshold",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

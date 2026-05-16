@@ -31,6 +31,7 @@ export function Rules() {
       <section className="rules-section">
         <h3 className="rules-subheading">Promotion</h3>
         <p>Pawns promote automatically to queens on the back rank. Split moves to promotion rank are not allowed.</p>
+        <p>A promoted queen keeps all entanglements the pawn had. However, she cannot merge with copies of the original pawn that are still pawns — once promoted she is a queen, not a pawn sibling. If both copies of a split pawn promote to queens, those queens can merge with each other, since they are still copies of the same original piece.</p>
       </section>
 
       <section className="rules-section">

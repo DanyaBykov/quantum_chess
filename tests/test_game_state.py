@@ -308,6 +308,35 @@ class CastlingTest(unittest.TestCase):
         self.assertFalse(game.castling_rights["white_kingside"])
         self.assertFalse(game.castling_rights["white_queenside"])
 
+    def test_kingside_castle_entangles_with_superposed_piece_in_path(self):
+        import math
+        # Bishop 50% at f1 (blocks kingside castle path), 50% at g5 (path clear).
+        # King at e1, rook at h1. King attempts to castle kingside (e1->g1).
+        # Expected after fix:
+        #   clear branch  -> king castles to g1, rook moves to f1
+        #   blocked branch -> king stays at e1, rook stays at h1, bishop stays at f1
+        basis_blocked = BoardState._board_to_tuple({"e1": "K", "h1": "R", "f1": "B", "e8": "k"})
+        basis_clear   = BoardState._board_to_tuple({"e1": "K", "h1": "R", "g5": "B", "e8": "k"})
+        amp = 1 / math.sqrt(2)
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis_blocked: amp + 0j, basis_clear: amp + 0j}),
+            side_to_move="white",
+        )
+        game.apply_classical_move("e1", "g1")
+
+        # King should be split between e1 (blocked branch) and g1 (castled branch)
+        self.assertAlmostEqual(game.board_state.probability("g1"), 0.5, places=3)
+        self.assertAlmostEqual(game.board_state.probability("e1"), 0.5, places=3)
+        # Rook stays at h1 in blocked branch, moves to f1 in castled branch
+        self.assertAlmostEqual(game.board_state.probability("h1"), 0.5, places=3)
+        # Bishop at f1 survives in blocked branch (not overwritten by rook)
+        e1_idx = parse_square("e1")
+        f1_idx = parse_square("f1")
+        blocked_bases = [b for b in game.board_state.amplitudes if b[e1_idx] == "K"]
+        for b in blocked_bases:
+            self.assertEqual(b[f1_idx], "B",
+                "Bishop at f1 must not be overwritten by rook in the blocked branch")
+
 
 class EnPassantTest(unittest.TestCase):
     def test_en_passant_target_set_after_two_step_pawn_move(self):
