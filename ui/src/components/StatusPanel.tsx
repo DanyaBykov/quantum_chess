@@ -8,7 +8,6 @@ interface StatusPanelProps {
 
 export function StatusPanel({ snapshot, loading, error }: StatusPanelProps) {
   const status = snapshot?.game_status ?? "ongoing";
-  const inCheck = snapshot?.in_check ?? false;
   const legalCount = snapshot?.legal_moves?.length ?? 0;
 
   return (
@@ -19,13 +18,6 @@ export function StatusPanel({ snapshot, loading, error }: StatusPanelProps) {
         <span className="status-label">Status</span>
         <span className={["status-value", status !== "ongoing" ? "status-value-check" : "status-value-ok"].join(" ")}>
           {loading ? "sync…" : status}
-        </span>
-      </div>
-
-      <div className="status-row">
-        <span className="status-label">Check</span>
-        <span className={["status-value", inCheck ? "status-value-check" : ""].join(" ")}>
-          {inCheck ? "YES" : "—"}
         </span>
       </div>
 

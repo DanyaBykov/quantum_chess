@@ -14,11 +14,12 @@ interface BoardProps {
   snapshot: GameSnapshot | null;
   sourceSquares: string[];
   legalTargets: string[];
-  inCheckSquare: string | null;
   onSelectSquare: (square: string) => void;
 }
 
-export function Board({ snapshot, sourceSquares, legalTargets, inCheckSquare, onSelectSquare }: BoardProps) {
+export function Board({ snapshot, sourceSquares, legalTargets, onSelectSquare }: BoardProps) {
+  const sideToMove = snapshot?.side_to_move ?? "white";
+
   return (
     <div className="board-wrap">
       <div className="board-ranks" aria-hidden="true">
@@ -34,13 +35,19 @@ export function Board({ snapshot, sourceSquares, legalTargets, inCheckSquare, on
             const piece = snapshot?.board[square] ?? null;
             const probability = snapshot?.probabilities[square] ?? 0;
             const isSelected = sourceSquares.includes(square);
-            const isInCheck = square === inCheckSquare;
             const isLegalTarget = legalTargets.includes(square);
             const isDark = (Number(rank) + fileIdx) % 2 === 0;
             const heatOpacity =
               probability > 0 && probability < 1
                 ? (Math.min(probability, 1 - probability) * 0.8).toFixed(3)
                 : "0";
+
+            const isFriendly = piece !== null && (
+              sideToMove === "white" ? piece === piece.toUpperCase() : piece === piece.toLowerCase()
+            );
+            // A square is interactive if it's a friendly piece (potential source)
+            // or a highlighted legal destination. Everything else is inert.
+            const isInteractive = isFriendly || isLegalTarget;
 
             return (
               <button
@@ -50,8 +57,8 @@ export function Board({ snapshot, sourceSquares, legalTargets, inCheckSquare, on
                   "square",
                   isDark ? "square-dark" : "square-light",
                   isSelected ? "square-selected" : "",
-                  isInCheck ? "square-in-check" : "",
                   !piece && probability > 0 ? "square-ghost" : "",
+                  !isInteractive ? "square-inert" : "",
                 ].join(" ")}
                 style={{ "--heat-opacity": heatOpacity } as React.CSSProperties}
                 onClick={() => onSelectSquare(square)}

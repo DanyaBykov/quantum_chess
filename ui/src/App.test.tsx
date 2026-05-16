@@ -25,11 +25,9 @@ const initialSnapshot = {
   ),
   side_to_move: "white",
   fullmove_number: 1,
-  in_check: false,
   game_status: "ongoing",
-  promotion_pending: false,
-  promotion_square: null,
-  legal_moves: [],
+  legal_moves: [["b1", "c3"], ["b1", "a3"], ["b1", "b4"]] as [string, string][],
+  last_move_outcome: null,
 };
 
 describe("App", () => {

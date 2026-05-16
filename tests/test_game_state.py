@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from engine.board_state import BoardState
-from engine.game_state import QuantumGame, game_status, is_in_check, legal_moves_for, validate_move_on_basis
+from engine.board_state import BoardState, parse_square
+from engine.game_state import QuantumGame, _would_move_in_basis, game_status, legal_moves_for, validate_move_on_basis
 
 
 class MoveValidationTest(unittest.TestCase):
@@ -115,41 +115,7 @@ class QuantumGameTest(unittest.TestCase):
         self.assertEqual(list(game.board_state.amplitudes.keys()), [BoardState._board_to_tuple({"b1": "N"})])
         self.assertAlmostEqual(abs(next(iter(game.board_state.amplitudes.values()))) ** 2, 1.0)
 
-    @patch("engine.game_state.measure")
-    def test_measure_square_delegates_to_quantum_measurement(self, measure_mock):
-        initial_state = BoardState(amplitudes={BoardState._board_to_tuple({"d4": "Q"}): 1 + 0j})
-        collapsed_state = BoardState(amplitudes={BoardState._board_to_tuple({}): 1 + 0j})
-        measure_mock.return_value = collapsed_state
-        game = QuantumGame(board_state=initial_state)
 
-        game.measure_square("d4")
-
-        measure_mock.assert_called_once_with(initial_state, "d4")
-        self.assertIs(game.board_state, collapsed_state)
-
-
-class CheckDetectionTest(unittest.TestCase):
-    def test_is_in_check_detects_rook_attack(self):
-        basis = BoardState._board_to_tuple({"e8": "R", "e1": "k"})
-        state = BoardState(amplitudes={basis: 1 + 0j})
-        self.assertTrue(is_in_check(state, "black"))
-
-    def test_is_in_check_no_check_when_blocked(self):
-        basis = BoardState._board_to_tuple({"e8": "R", "e4": "p", "e1": "k"})
-        state = BoardState(amplitudes={basis: 1 + 0j})
-        self.assertFalse(is_in_check(state, "black"))
-
-    def test_is_in_check_false_when_safe(self):
-        basis = BoardState._board_to_tuple({"a1": "K", "h8": "k"})
-        state = BoardState(amplitudes={basis: 1 + 0j})
-        self.assertFalse(is_in_check(state, "white"))
-        self.assertFalse(is_in_check(state, "black"))
-
-    def test_apply_classical_move_rejects_move_that_exposes_king(self):
-        basis = BoardState._board_to_tuple({"e1": "K", "e4": "R", "e8": "q"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
-        with self.assertRaisesRegex(ValueError, "leaves white's king in check"):
-            game.apply_classical_move("e4", "a4")
 
 
 class LegalMovesTest(unittest.TestCase):
@@ -170,129 +136,64 @@ class LegalMovesTest(unittest.TestCase):
         moves = legal_moves_for(state, "black")
         self.assertEqual(moves, [])
 
-    def test_superposition_excludes_move_blocked_in_one_branch(self):
+    def test_superposition_allows_move_legal_in_at_least_one_branch(self):
         import math
         # Knight in superposition at b1: in branch A target c3 is empty (valid),
-        # in branch B a white pawn occupies c3 (same-color capture, invalid).
-        # The move b1->c3 must be excluded because it's illegal in branch B.
+        # in branch B a white pawn occupies c3 (same-color capture, invalid in that branch).
+        # Under "any basis" semantics the move b1->c3 IS legal: the knight moves in branch A
+        # and stays in branch B (creating entanglement). Only if it's illegal in ALL branches
+        # would it be excluded.
         basis_a = BoardState._board_to_tuple({"b1": "N", "e1": "K", "e8": "k"})
         basis_b = BoardState._board_to_tuple({"b1": "N", "c3": "P", "e1": "K", "e8": "k"})
         amp = 1 / math.sqrt(2)
         state = BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
         moves = legal_moves_for(state, "white")
-        self.assertNotIn(("b1", "c3"), moves)
-        # But a3 is free in both branches, so b1->a3 should be legal
+        self.assertIn(("b1", "c3"), moves)
+        # a3 is free in both branches, so b1->a3 must also be legal
         self.assertIn(("b1", "a3"), moves)
-
-    def test_pinned_piece_excluded_from_legal_moves(self):
-        # White knight on d4 is pinned — any knight move exposes the king on d1 to black rook on d8.
-        # Knights cannot slide along the pin axis, so no knight move is legal.
-        basis = BoardState._board_to_tuple({"d1": "K", "d4": "N", "d8": "r"})
-        state = BoardState(amplitudes={basis: 1 + 0j})
-        moves = legal_moves_for(state, "white")
-        src_squares = {src for src, _ in moves}
-        self.assertNotIn("d4", src_squares)  # knight is pinned — no legal moves
-        self.assertIn("d1", src_squares)     # king can still move
 
 
 class GameStatusTest(unittest.TestCase):
     def test_ongoing_when_legal_moves_exist(self):
-        self.assertEqual(game_status(BoardState.initial(), "white"), "ongoing")
-
-    def test_checkmate_when_in_check_with_no_moves(self):
-        # White king a1, black queen b3, black rook a8.
-        # Rook on a8 checks along the a-file; queen on b3 covers a2, b2, and b1;
-        # the king has no legal escape squares.
-        basis = BoardState._board_to_tuple({"a1": "K", "b3": "q", "a8": "r"})
+        basis = BoardState._board_to_tuple({"e1": "K", "e8": "k"})
         state = BoardState(amplitudes={basis: 1 + 0j})
-        self.assertEqual(game_status(state, "white"), "checkmate")
-
-    def test_stalemate_when_no_moves_not_in_check(self):
-        # White king a1, black queen b3 — king not in check but no legal moves
-        basis = BoardState._board_to_tuple({"a1": "K", "b3": "q"})
-        state = BoardState(amplitudes={basis: 1 + 0j})
-        self.assertEqual(game_status(state, "white"), "stalemate")
+        self.assertEqual(game_status(state), "ongoing")
 
 
 class PromotionTest(unittest.TestCase):
-    def test_pawn_reaching_back_rank_sets_promotion_pending(self):
-        basis = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
-        game.apply_classical_move("e7", "e8")
-        self.assertTrue(game.promotion_pending)
-        self.assertEqual(game.promotion_square, "e8")
-        self.assertEqual(game.side_to_move, "white")  # turn NOT advanced
-
-    def test_apply_promotion_replaces_pawn_and_advances_turn(self):
-        basis = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
-        game.apply_classical_move("e7", "e8")
-        game.apply_promotion("Q")
-        self.assertFalse(game.promotion_pending)
-        self.assertEqual(game.piece_at("e8"), "Q")
-        self.assertEqual(game.side_to_move, "black")
-
-    def test_apply_promotion_rejects_invalid_piece(self):
-        basis = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
-        game.apply_classical_move("e7", "e8")
-        with self.assertRaisesRegex(ValueError, "invalid promotion piece"):
-            game.apply_promotion("K")
-
-    def test_apply_classical_move_blocked_when_promotion_pending(self):
-        basis = BoardState._board_to_tuple({"e7": "P", "d2": "P", "a1": "K", "a8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
-        game.apply_classical_move("e7", "e8")
-        with self.assertRaisesRegex(ValueError, "promotion pending"):
-            game.apply_classical_move("d2", "d3")
-
-    def test_black_pawn_promotion_pending(self):
-        basis = BoardState._board_to_tuple({"e2": "p", "h1": "K", "h8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}), side_to_move="black")
-        game.apply_classical_move("e2", "e1")
-        self.assertTrue(game.promotion_pending)
-        self.assertEqual(game.promotion_square, "e1")
-        self.assertEqual(game.side_to_move, "black")  # turn not advanced
-
-    def test_apply_promotion_works_for_black(self):
-        basis = BoardState._board_to_tuple({"e2": "p", "h1": "K", "h8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}), side_to_move="black")
-        game.apply_classical_move("e2", "e1")
-        game.apply_promotion("q")
-        self.assertEqual(game.piece_at("e1"), "q")
-        self.assertEqual(game.side_to_move, "white")
-        self.assertIsNone(game.promotion_square)
-
-    def test_apply_promotion_raises_when_not_pending(self):
-        basis = BoardState._board_to_tuple({"a1": "K", "a8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
-        with self.assertRaisesRegex(ValueError, "no promotion is pending"):
-            game.apply_promotion("Q")
-
     def test_split_move_to_promotion_rank_raises(self):
-        # White pawn on e7 cannot split to d8/f8 (diagonal captures to back rank)
         basis = BoardState._board_to_tuple({"e7": "P", "d8": "r", "f8": "r", "a1": "K", "e8": "k"})
         game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
         with self.assertRaisesRegex(ValueError, "pawn cannot split to promotion rank"):
             game.apply_split_move("e7", "d8", "f8")
 
-    def test_apply_promotion_raises_if_no_pawn_at_square(self):
-        # Manually set promotion_pending without a real pawn at the square
-        basis = BoardState._board_to_tuple({"a1": "K", "a8": "k"})
-        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
-        game.promotion_pending = True
-        game.promotion_square = "e8"  # no pawn here
-        with self.assertRaisesRegex(ValueError, "no pawn found"):
-            game.apply_promotion("Q")
 
-    def test_split_and_merge_blocked_when_promotion_pending(self):
-        basis = BoardState._board_to_tuple({"e7": "P", "b1": "N", "a1": "K", "a8": "k"})
+class AutoPromotionTest(unittest.TestCase):
+    def test_pawn_auto_promotes_to_queen_on_back_rank(self):
+        basis = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
         game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
         game.apply_classical_move("e7", "e8")
-        with self.assertRaisesRegex(ValueError, "promotion pending"):
-            game.apply_split_move("b1", "a3", "c3")
-        with self.assertRaisesRegex(ValueError, "promotion pending"):
-            game.apply_merge_move("b1", "c3", "d2")
+        self.assertFalse(game.promotion_pending)
+        self.assertEqual(game.piece_at("e8"), "Q")
+        self.assertEqual(game.side_to_move, "black")
+
+    def test_black_pawn_auto_promotes_to_queen(self):
+        basis = BoardState._board_to_tuple({"e2": "p", "h1": "K", "h8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}), side_to_move="black")
+        game.apply_classical_move("e2", "e1")
+        self.assertFalse(game.promotion_pending)
+        self.assertEqual(game.piece_at("e1"), "q")
+        self.assertEqual(game.side_to_move, "white")
+
+    def test_pawn_in_superposition_auto_promotes_in_branch(self):
+        import math
+        basis_a = BoardState._board_to_tuple({"e7": "P", "a1": "K", "a8": "k"})
+        basis_b = BoardState._board_to_tuple({"d7": "P", "a1": "K", "a8": "k"})
+        amp = 1 / math.sqrt(2)
+        game = QuantumGame(board_state=BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j}))
+        game.apply_classical_move("e7", "e8")
+        e8_prob = game.board_state.probability("e8")
+        self.assertAlmostEqual(e8_prob, 0.5)
 
 
 class CastlingTest(unittest.TestCase):
@@ -356,24 +257,6 @@ class CastlingTest(unittest.TestCase):
         game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
         with self.assertRaisesRegex(ValueError, "illegal move"):
             game.apply_classical_move("e1", "g1")
-
-    def test_castle_not_in_legal_moves_when_king_in_check(self):
-        # King is under attack — castling must not appear in legal moves
-        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k", "e5": "r"})
-        state = BoardState(amplitudes={basis: 1 + 0j})
-        rights = {"white_kingside": True, "white_queenside": True,
-                  "black_kingside": True, "black_queenside": True}
-        moves = legal_moves_for(state, "white", castling_rights=rights)
-        self.assertNotIn(("e1", "g1"), moves)
-
-    def test_castle_not_in_legal_moves_when_passing_through_attacked_square(self):
-        # Black rook attacks f1 — white cannot castle kingside (king passes through f1)
-        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k", "f5": "r"})
-        state = BoardState(amplitudes={basis: 1 + 0j})
-        rights = {"white_kingside": True, "white_queenside": True,
-                  "black_kingside": True, "black_queenside": True}
-        moves = legal_moves_for(state, "white", castling_rights=rights)
-        self.assertNotIn(("e1", "g1"), moves)
 
     def test_castling_rights_revoked_after_king_moves(self):
         game = self._kingside_setup("white")
@@ -468,6 +351,338 @@ class EnPassantTest(unittest.TestCase):
         )
         game.apply_split_move("b1", "a3", "c3")
         self.assertIsNone(game.en_passant_target)
+
+
+class WinConditionTest(unittest.TestCase):
+    def test_ongoing_when_both_kings_present(self):
+        basis = BoardState._board_to_tuple({"e1": "K", "e8": "k"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        self.assertEqual(game_status(state), "ongoing")
+
+    def test_black_wins_when_white_king_gone(self):
+        basis = BoardState._board_to_tuple({"e8": "k"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        self.assertEqual(game_status(state), "black_wins")
+
+    def test_white_wins_when_black_king_gone(self):
+        basis = BoardState._board_to_tuple({"e1": "K"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        self.assertEqual(game_status(state), "white_wins")
+
+    def test_ongoing_when_king_in_superposition_not_zero(self):
+        import math
+        basis_a = BoardState._board_to_tuple({"e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"g1": "K", "e8": "k"})
+        amp = 1 / math.sqrt(2)
+        state = BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
+        self.assertEqual(game_status(state), "ongoing")
+
+    def test_king_can_move_into_attacked_square(self):
+        # No self-check restriction: king is free to move anywhere geometrically valid
+        basis = BoardState._board_to_tuple({"e1": "K", "e8": "r", "a8": "k"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        # e2 is attacked by the black rook on e8 — but in quantum chess this is legal
+        moves = legal_moves_for(state, "white")
+        self.assertIn(("e1", "e2"), moves)
+
+
+class CaptureObservationTest(unittest.TestCase):
+    def _capture_setup(self) -> QuantumGame:
+        """Knight in superposition a3/c3, enemy pawn at d5."""
+        import math
+        basis_a = BoardState._board_to_tuple({"a3": "N", "d5": "p", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"c3": "N", "d5": "p", "e1": "K", "e8": "k"})
+        amp = 1 / math.sqrt(2)
+        return QuantumGame(
+            board_state=BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
+        )
+
+    def test_definite_piece_captures_without_observation(self):
+        basis = BoardState._board_to_tuple({"e4": "N", "d6": "p", "e1": "K", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        game.apply_classical_move("e4", "d6")
+        self.assertEqual(game.piece_at("d6"), "N")
+        self.assertIsNone(game.piece_at("e4"))
+        self.assertEqual(game.last_move_outcome, "success")
+
+    @patch("engine.quantum_ops.random.choices", return_value=[True])
+    def test_superposition_capture_succeeds_when_observed_present(self, _):
+        game = self._capture_setup()
+        # c3→d5 is a valid knight move (file_delta=1, rank_delta=2)
+        game.apply_classical_move("c3", "d5")
+        self.assertEqual(game.last_move_outcome, "success")
+        self.assertEqual(game.piece_at("d5"), "N")
+        self.assertAlmostEqual(game.board_state.probability("d5"), 1.0)
+
+    @patch("engine.quantum_ops.random.choices", return_value=[False])
+    def test_superposition_capture_fails_when_observed_absent(self, _):
+        game = self._capture_setup()
+        game.apply_classical_move("c3", "d5")
+        self.assertEqual(game.last_move_outcome, "capture_failed")
+        # Pawn untouched
+        self.assertEqual(game.piece_at("d5"), "p")
+        # Turn advanced (failed capture still costs the turn)
+        self.assertEqual(game.side_to_move, "black")
+
+
+class PawnCaptureObservationTest(unittest.TestCase):
+    def _pawn_setup(self) -> QuantumGame:
+        """White pawn in superposition c4/e4; black pawn at d5."""
+        import math
+        basis_a = BoardState._board_to_tuple({"c4": "P", "d5": "p", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"e4": "P", "d5": "p", "e1": "K", "e8": "k"})
+        amp = 1 / math.sqrt(2)
+        return QuantumGame(
+            board_state=BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
+        )
+
+    @patch("engine.quantum_ops.random.choices", return_value=[True])
+    def test_pawn_capture_succeeds_when_both_observed_present(self, _):
+        game = self._pawn_setup()
+        game.apply_classical_move("c4", "d5")
+        self.assertEqual(game.last_move_outcome, "success")
+        self.assertEqual(game.piece_at("d5"), "P")
+
+    @patch("engine.quantum_ops.random.choices", return_value=[False])
+    def test_pawn_capture_fails_pawn_not_found(self, _):
+        game = self._pawn_setup()
+        game.apply_classical_move("c4", "d5")
+        self.assertEqual(game.last_move_outcome, "capture_failed")
+        self.assertEqual(game.piece_at("d5"), "p")
+        self.assertEqual(game.side_to_move, "black")
+
+    def test_pawn_capture_definite_pawn_definite_target_always_succeeds(self):
+        basis = BoardState._board_to_tuple({"c4": "P", "d5": "p", "e1": "K", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        game.apply_classical_move("c4", "d5")
+        self.assertEqual(game.last_move_outcome, "success")
+        self.assertEqual(game.piece_at("d5"), "P")
+
+    def test_pawn_capture_fails_when_target_not_found(self):
+        """Pawn is 100%, target pawn in superposition — target not found on second observe."""
+        import math
+        basis_a = BoardState._board_to_tuple({"c4": "P", "d5": "p", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"c4": "P", "d6": "p", "e1": "K", "e8": "k"})
+        amp = 1 / math.sqrt(2)
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
+        )
+        # First call (src observation — skipped since pawn is 100%)
+        # Only call: target observation at d5. side_effect makes first call return [False] → absent
+        with patch("engine.quantum_ops.random.choices", return_value=[False]):
+            game.apply_classical_move("c4", "d5")
+        self.assertEqual(game.last_move_outcome, "capture_failed")
+        self.assertEqual(game.side_to_move, "black")
+
+
+    def test_pawn_cannot_move_diagonal_to_empty_non_ep_square(self):
+        basis = BoardState._board_to_tuple({"d4": "P", "e1": "K", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        with self.assertRaises(ValueError):
+            game.apply_classical_move("d4", "e5")  # e5 is empty, not en passant
+
+
+class CastlingSplitTest(unittest.TestCase):
+    def test_king_can_split_to_castle_and_regular_move(self):
+        # King at e1, rook at h1, path clear, g1 empty, d1 empty
+        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        # Split: king goes to d1 (regular) and g1 (kingside castle)
+        game.apply_split_move("e1", "d1", "g1")
+        # In the d1 branch: king at d1, rook still at h1
+        # In the g1 branch: king at g1, rook at f1 (castled)
+        rook_at_h1 = game.board_state.probability("h1")
+        rook_at_f1 = game.board_state.probability("f1")
+        self.assertAlmostEqual(rook_at_h1, 0.5, places=3)
+        self.assertAlmostEqual(rook_at_f1, 0.5, places=3)
+        self.assertEqual(game.side_to_move, "black")
+
+    def test_king_split_both_regular_moves_rook_unchanged(self):
+        basis = BoardState._board_to_tuple({"e1": "K", "h1": "R", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        game.apply_split_move("e1", "d1", "f1")
+        # Neither target is a 2-square move — rook stays at h1 in all branches
+        self.assertAlmostEqual(game.board_state.probability("h1"), 1.0, places=3)
+        self.assertEqual(game.side_to_move, "black")
+
+
+class MergeViaRegularMoveTest(unittest.TestCase):
+    def test_piece_can_move_to_own_copy_square(self):
+        import math
+        # Bishop in superposition at c1 (50%) and e3 (50%)
+        basis_a = BoardState._board_to_tuple({"c1": "B", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"e3": "B", "e1": "K", "e8": "k"})
+        amp = 1 / math.sqrt(2)
+        game = QuantumGame(board_state=BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j}))
+        # Move bishop from c1 to e3:
+        # - In basis_a: normal move c1→e3
+        # - In basis_b: bishop already at e3, this branch gets merged
+        game.apply_classical_move("c1", "e3")
+        # Result: bishop definitely at e3 (both branches collapsed there)
+        self.assertAlmostEqual(game.board_state.probability("e3"), 1.0, places=3)
+        self.assertAlmostEqual(game.board_state.probability("c1"), 0.0, places=3)
+
+    def test_piece_cannot_move_to_different_friendly_piece(self):
+        # Bishop cannot merge with a knight
+        basis = BoardState._board_to_tuple({"c1": "B", "e3": "N", "e1": "K", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+        with self.assertRaises(ValueError):
+            game.apply_classical_move("c1", "e3")
+
+    def test_merge_preserves_unrelated_branch_probability(self):
+        """Three-branch state: unrelated branch must not lose amplitude during merge."""
+        import math
+        # 3 branches: 25% bishop@c1, 25% bishop@e3, 50% unrelated (bishop@g5)
+        basis_a = BoardState._board_to_tuple({"c1": "B", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"e3": "B", "e1": "K", "e8": "k"})
+        basis_c = BoardState._board_to_tuple({"g5": "B", "e1": "K", "e8": "k"})
+        amp_a = 0.5 + 0j        # |0.5|^2 = 0.25
+        amp_b = 0.5 + 0j        # |0.5|^2 = 0.25
+        amp_c = (1 / math.sqrt(2)) + 0j  # |1/√2|^2 = 0.50
+        game = QuantumGame(board_state=BoardState(amplitudes={
+            basis_a: amp_a,
+            basis_b: amp_b,
+            basis_c: amp_c,
+        }))
+        # Move bishop from c1 to e3 (merge):
+        # - basis_a: bishop moves c1→e3 (modified)
+        # - basis_b: bishop already at e3, stays (unmodified, same key as modified)
+        # - basis_c: bishop at g5, no piece at c1, stays (unmodified, different key)
+        game.apply_classical_move("c1", "e3")
+        # After summing amplitudes: e3 branch = 0.5+0.5=1.0, g5 branch = 1/√2
+        # After normalize: e3_prob = 1.0/1.5 ≈ 0.667, g5_prob = 0.5/1.5 ≈ 0.333
+        e3_prob = game.board_state.probability("e3")
+        g5_prob = game.board_state.probability("g5")
+        self.assertAlmostEqual(e3_prob, 2 / 3, places=3)
+        self.assertAlmostEqual(g5_prob, 1 / 3, places=3)
+
+    def test_legal_moves_includes_own_copy_square(self):
+        import math
+        basis_a = BoardState._board_to_tuple({"c1": "B", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"e3": "B", "e1": "K", "e8": "k"})
+        amp = 1 / math.sqrt(2)
+        state = BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
+        moves = legal_moves_for(state, "white")
+        self.assertIn(("c1", "e3"), moves)
+
+
+class LegalMovesAnyBasisTest(unittest.TestCase):
+    def test_queen_move_through_superposition_piece_is_legal(self):
+        """Queen at h5 can move to e8 even when g6 is in superposition (50% pawn)."""
+        amp = (1 / 2 ** 0.5) + 0j
+        basis_blocked = BoardState._board_to_tuple({"h5": "Q", "g6": "p", "e1": "K", "e8": "k"})
+        basis_clear   = BoardState._board_to_tuple({"h5": "Q", "e1": "K", "e8": "k"})
+
+        state = BoardState(amplitudes={
+            basis_blocked: amp,
+            basis_clear:   amp,
+        })
+
+        moves = legal_moves_for(state, "white")
+        self.assertIn(("h5", "e8"), moves)
+
+    def test_rook_move_through_superposition_friendly_is_legal(self):
+        """Rook at a1 can move to a7 even when a friendly piece is in superposition at a4."""
+        amp = (1 / 2 ** 0.5) + 0j
+        basis_blocked = BoardState._board_to_tuple({"a1": "R", "a4": "P", "e1": "K", "e8": "k"})
+        basis_clear   = BoardState._board_to_tuple({"a1": "R", "e1": "K", "e8": "k"})
+
+        state = BoardState(amplitudes={
+            basis_blocked: amp,
+            basis_clear:   amp,
+        })
+
+        moves = legal_moves_for(state, "white")
+        self.assertIn(("a1", "a7"), moves)
+
+
+class WouldMoveInBasisTest(unittest.TestCase):
+    def test_queen_clear_path_returns_true(self):
+        basis = BoardState._board_to_tuple({"h5": "Q"})
+        self.assertTrue(_would_move_in_basis(basis, parse_square("h5"), parse_square("e8"), "Q"))
+
+    def test_queen_blocked_path_returns_false(self):
+        basis = BoardState._board_to_tuple({"h5": "Q", "g6": "p"})
+        self.assertFalse(_would_move_in_basis(basis, parse_square("h5"), parse_square("e8"), "Q"))
+
+    def test_knight_ignores_intermediate_pieces(self):
+        # Knight on b1 surrounded by pieces — still can jump to c3
+        basis = BoardState._board_to_tuple({"b1": "N", "b2": "P", "c2": "P"})
+        self.assertTrue(_would_move_in_basis(basis, parse_square("b1"), parse_square("c3"), "N"))
+
+    def test_friendly_different_piece_at_target_returns_false(self):
+        basis = BoardState._board_to_tuple({"a1": "R", "a5": "P"})
+        self.assertFalse(_would_move_in_basis(basis, parse_square("a1"), parse_square("a5"), "R"))
+
+    def test_enemy_piece_at_target_returns_true(self):
+        # Enemy at target is a capture, not a block — function must return True
+        basis = BoardState._board_to_tuple({"a1": "R", "a5": "p"})
+        self.assertTrue(_would_move_in_basis(basis, parse_square("a1"), parse_square("a5"), "R"))
+
+
+class EntanglementTest(unittest.TestCase):
+    def test_queen_entangles_with_superposition_pawn(self):
+        """Queen moving diagonally through a 50% pawn creates entanglement:
+        queen is at destination only in branches where path was clear."""
+        amp = (1 / 2 ** 0.5) + 0j
+        basis_blocked = BoardState._board_to_tuple({"h5": "Q", "g6": "p", "a1": "K", "a8": "k"})
+        basis_clear   = BoardState._board_to_tuple({"h5": "Q", "a1": "K", "a8": "k"})
+
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis_blocked: amp, basis_clear: amp}),
+            side_to_move="white",
+        )
+        game.apply_classical_move("h5", "e8")
+
+        prob_e8 = game.board_state.probability("e8")
+        prob_h5 = game.board_state.probability("h5")
+        self.assertAlmostEqual(prob_e8, 0.5, places=5)
+        self.assertAlmostEqual(prob_h5, 0.5, places=5)
+
+        # Verify correlated structure: in branches where queen is at e8, g6 must be empty;
+        # in branches where queen is at h5, g6 must still have the pawn
+        amps = game.board_state.amplitudes
+        e8_idx = parse_square("e8")
+        h5_idx = parse_square("h5")
+        g6_idx = parse_square("g6")
+        e8_bases = [b for b in amps if b[e8_idx] == "Q"]
+        h5_bases = [b for b in amps if b[h5_idx] == "Q"]
+        for b in e8_bases:
+            self.assertIsNone(b[g6_idx])
+        for b in h5_bases:
+            self.assertEqual(b[g6_idx], "p")
+
+    def test_rook_entangles_with_superposition_blocker(self):
+        """Rook moving through a 50% superposition piece moves in clear branches only."""
+        amp = (1 / 2 ** 0.5) + 0j
+        basis_blocked = BoardState._board_to_tuple({"a1": "R", "a4": "P", "e1": "K", "e8": "k"})
+        basis_clear   = BoardState._board_to_tuple({"a1": "R", "e1": "K", "e8": "k"})
+
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis_blocked: amp, basis_clear: amp}),
+            side_to_move="white",
+        )
+        game.apply_classical_move("a1", "a7")
+
+        prob_a7 = game.board_state.probability("a7")
+        prob_a1 = game.board_state.probability("a1")
+        self.assertAlmostEqual(prob_a7, 0.5, places=5)
+        self.assertAlmostEqual(prob_a1, 0.5, places=5)
+
+    def test_non_sliding_piece_moves_in_all_branches(self):
+        """A knight's move ignores intermediate squares — it moves in all branches."""
+        amp = (1 / 2 ** 0.5) + 0j
+        basis_a = BoardState._board_to_tuple({"b1": "N", "c2": "P", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"b1": "N", "e1": "K", "e8": "k"})
+
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={basis_a: amp, basis_b: amp}),
+            side_to_move="white",
+        )
+        game.apply_classical_move("b1", "c3")
+
+        prob_c3 = game.board_state.probability("c3")
+        self.assertAlmostEqual(prob_c3, 1.0, places=5)
 
 
 if __name__ == "__main__":

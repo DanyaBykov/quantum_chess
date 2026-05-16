@@ -19,31 +19,14 @@ async function runAction(mode: ActionMode, selections: string[]): Promise<GameSn
     return gameClient.mergeMove({ src_a, src_b, target });
   }
 
-  const [target] = selections;
-  return gameClient.measureSquare({ target });
+  throw new Error(`Unhandled mode: ${mode}`);
 }
 
 export function selectionCountForMode(mode: ActionMode): number {
-  if (mode === "measure") {
-    return 1;
-  }
   if (mode === "classical") {
     return 2;
   }
   return 3;
-}
-
-export function modeLabel(mode: ActionMode): string {
-  if (mode === "classical") {
-    return "Classical move";
-  }
-  if (mode === "split") {
-    return "Split move";
-  }
-  if (mode === "merge") {
-    return "Merge move";
-  }
-  return "Measure square";
 }
 
 export function useGame() {
@@ -106,25 +89,11 @@ export function useGame() {
     }
   }
 
-  async function promote(piece: string) {
-    setLoading(true);
-    try {
-      const nextSnapshot = await gameClient.promote({ piece });
-      setSnapshot(nextSnapshot);
-      setError(null);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Promotion failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return {
     snapshot,
     loading,
     error,
     reset,
     execute,
-    promote,
   };
 }

@@ -103,3 +103,25 @@ def measure(state: BoardState, target_square: str) -> BoardState:
     # Re-normalize the surviving universes so probabilities sum to 1.0
     new_state.normalize()
     return new_state
+
+def observe_square(state: BoardState, target_square: str) -> tuple[bool, BoardState]:
+    """
+    Observe whether any piece occupies target_square.
+    Returns (is_present, collapsed_state).
+    Unlike measure(), the caller learns the outcome.
+    """
+    tgt_idx = parse_square(target_square)
+    prob_occupied = sum(
+        abs(amp) ** 2
+        for basis, amp in state.amplitudes.items()
+        if basis[tgt_idx] is not None
+    )
+    is_present = random.choices([True, False], weights=[prob_occupied, 1.0 - prob_occupied], k=1)[0]
+
+    new_state = BoardState(entanglement_map=copy.deepcopy(state.entanglement_map))
+    for basis, amp in state.amplitudes.items():
+        if (basis[tgt_idx] is not None) == is_present:
+            new_state.amplitudes[basis] = amp
+
+    new_state.normalize()
+    return is_present, new_state

@@ -1,17 +1,13 @@
-import type { GameStatus, SideToMove } from "../api/types";
+import type { GameStatus } from "../api/types";
 
 interface GameOverBannerProps {
-  status: GameStatus;
-  sideToMove: SideToMove;
+  status: "white_wins" | "black_wins";
   onReset: () => void;
 }
 
-export function GameOverBanner({ status, sideToMove, onReset }: GameOverBannerProps) {
-  if (status === "ongoing") return null;
-
-  const winner = sideToMove === "white" ? "Black" : "White";
-  const headline = status === "checkmate" ? `${winner} wins` : "Draw";
-  const sub = status === "checkmate" ? "Checkmate" : "Stalemate";
+export function GameOverBanner({ status, onReset }: GameOverBannerProps) {
+  const headline = status === "white_wins" ? "White wins" : "Black wins";
+  const sub = "The king has been captured";
 
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="Game over">

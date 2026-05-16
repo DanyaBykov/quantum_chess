@@ -8,11 +8,9 @@ class GameSnapshot(BaseModel):
     probabilities: Dict[str, float]
     side_to_move: Literal["white", "black"]
     fullmove_number: int
-    in_check: bool
-    game_status: Literal["ongoing", "checkmate", "stalemate"]
-    promotion_pending: bool
-    promotion_square: Optional[str]
+    game_status: Literal["ongoing", "white_wins", "black_wins"]
     legal_moves: List[Tuple[str, str]]
+    last_move_outcome: Optional[Literal["success", "capture_failed"]] = None
 
 
 class ClassicalMoveRequest(BaseModel):
@@ -30,11 +28,3 @@ class MergeMoveRequest(BaseModel):
     src_a: str
     src_b: str
     target: str
-
-
-class MeasureRequest(BaseModel):
-    target: str
-
-
-class PromoteRequest(BaseModel):
-    piece: str

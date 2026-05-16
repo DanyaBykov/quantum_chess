@@ -7,7 +7,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from engine.board_state import BoardState, parse_square
-from engine.quantum_ops import _move_piece_in_tuple, measure, merge_move, split_move
+from engine.quantum_ops import _move_piece_in_tuple, measure, merge_move, observe_square, split_move
 
 
 class QuantumOpsTest(unittest.TestCase):
@@ -71,6 +71,45 @@ class QuantumOpsTest(unittest.TestCase):
         collapsed = measure(state, "d4")
 
         self.assertEqual(collapsed.amplitudes, {empty: 1 + 0j})
+
+
+class ObserveSquareTest(unittest.TestCase):
+    def test_observe_definite_occupied_always_present(self):
+        basis = BoardState._board_to_tuple({"e4": "N"})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        for _ in range(20):
+            is_present, new_state = observe_square(state, "e4")
+            self.assertTrue(is_present)
+            self.assertAlmostEqual(new_state.probability("e4"), 1.0)
+
+    def test_observe_definite_empty_always_absent(self):
+        basis = BoardState._board_to_tuple({})
+        state = BoardState(amplitudes={basis: 1 + 0j})
+        for _ in range(20):
+            is_present, new_state = observe_square(state, "e4")
+            self.assertFalse(is_present)
+
+    @patch("engine.quantum_ops.random.choices", return_value=[True])
+    def test_observe_superposition_collapses_to_occupied(self, _):
+        basis_a = BoardState._board_to_tuple({"e4": "N"})
+        basis_b = BoardState._board_to_tuple({})
+        amp = 1 / math.sqrt(2)
+        state = BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
+        is_present, new_state = observe_square(state, "e4")
+        self.assertTrue(is_present)
+        self.assertAlmostEqual(new_state.probability("e4"), 1.0)
+        self.assertEqual(len(new_state.amplitudes), 1)
+
+    @patch("engine.quantum_ops.random.choices", return_value=[False])
+    def test_observe_superposition_collapses_to_empty(self, _):
+        basis_a = BoardState._board_to_tuple({"e4": "N"})
+        basis_b = BoardState._board_to_tuple({})
+        amp = 1 / math.sqrt(2)
+        state = BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j})
+        is_present, new_state = observe_square(state, "e4")
+        self.assertFalse(is_present)
+        self.assertAlmostEqual(new_state.probability("e4"), 0.0)
+        self.assertEqual(len(new_state.amplitudes), 1)
 
 
 if __name__ == "__main__":

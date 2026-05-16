@@ -4,7 +4,6 @@ import type { ActionMode, GameSnapshot } from "./api/types";
 import { Board } from "./components/Board";
 import { Controls } from "./components/Controls";
 import { GameOverBanner } from "./components/GameOverBanner";
-import { PromotionDialog } from "./components/PromotionDialog";
 import { Rules } from "./components/Rules";
 import { StatusPanel } from "./components/StatusPanel";
 import { selectionCountForMode, useGame } from "./state/useGame";
@@ -14,11 +13,6 @@ type Tab = "game" | "rules";
 function trimSelections(mode: ActionMode, current: string[], next: string): string[] {
   const required = selectionCountForMode(mode);
   return [...current.filter((sq) => sq !== next), next].slice(-required);
-}
-
-function findKingSquare(board: Record<string, string | null>, side: string): string | null {
-  const king = side === "white" ? "K" : "k";
-  return Object.keys(board).find((sq) => board[sq] === king) ?? null;
 }
 
 function isFriendlyPiece(piece: string | null | undefined, sideToMove: string): boolean {
@@ -39,15 +33,9 @@ function computeLegalTargets(mode: ActionMode, selected: string[], snapshot: Gam
 
   if (mode === "split") {
     if (selected.length === 0) return [];
-    const srcPiece = board[selected[0]];
-    const isSrcKing = srcPiece === "K" || srcPiece === "k";
-    const srcFile = selected[0].charCodeAt(0) - 97;
-    // Filter legal moves for the source, excluding castling destinations for kings
-    // (castling requires the rook to move simultaneously — not valid as a split target)
     const targets = legalMoves
       .filter(([src]) => src === selected[0])
-      .map(([, tgt]) => tgt)
-      .filter((tgt) => !isSrcKing || Math.abs(tgt.charCodeAt(0) - 97 - srcFile) !== 2);
+      .map(([, tgt]) => tgt);
     // Once first target is picked, exclude it from second-target highlights
     return selected.length >= 2 ? targets.filter((sq) => sq !== selected[1]) : targets;
   }
@@ -78,16 +66,10 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("game");
   const [mode, setMode] = useState<ActionMode>("classical");
   const [selected, setSelected] = useState<string[]>([]);
-  const { snapshot, loading, error, reset, execute, promote } = useGame();
+  const { snapshot, loading, error, reset, execute } = useGame();
 
-  const promotionPending = snapshot?.promotion_pending ?? false;
   const gameStatus = snapshot?.game_status ?? "ongoing";
   const gameOver = gameStatus !== "ongoing";
-
-  const inCheckSquare =
-    snapshot?.in_check && snapshot.board && snapshot.side_to_move
-      ? findKingSquare(snapshot.board, snapshot.side_to_move)
-      : null;
 
   const legalTargets = computeLegalTargets(mode, selected, snapshot);
 
@@ -99,7 +81,7 @@ export default function App() {
   }
 
   function handleSelectSquare(sq: string) {
-    if (promotionPending || gameOver) return;
+    if (gameOver) return;
 
     const board = snapshot?.board;
     const side = snapshot?.side_to_move ?? "white";
@@ -151,17 +133,12 @@ export default function App() {
         if (sq === selected[0]) { setSelected([selected[1]]); return; }
         if (sq === selected[1]) { setSelected([selected[0]]); return; }
         if (friendly) { setSelected([sq]); return; }
+        // Only allow legal destinations as the merge target
+        if (!legalTargets.includes(sq)) return;
         setSelected([selected[0], selected[1], sq]);
         return;
       }
     }
-
-    if (mode === "measure") {
-      setSelected([sq]);
-      return;
-    }
-
-    setSelected((cur) => trimSelections(mode, cur, sq));
   }
 
   async function handleExecute() {
@@ -200,7 +177,6 @@ export default function App() {
           <div className="topbar-status">
             <span className={`side-pip side-pip-${snapshot.side_to_move}`} />
             <span>{snapshot.side_to_move} to move</span>
-            {snapshot.in_check ? <span className="topbar-check">· check</span> : null}
           </div>
         ) : null}
 
@@ -218,7 +194,6 @@ export default function App() {
               snapshot={snapshot}
               sourceSquares={sourceSquares}
               legalTargets={legalTargets}
-              inCheckSquare={inCheckSquare}
               onSelectSquare={handleSelectSquare}
             />
           </div>
@@ -228,7 +203,7 @@ export default function App() {
               mode={mode}
               selectedSquares={selected}
               loading={loading}
-              disabled={promotionPending || gameOver}
+              disabled={gameOver}
               onModeChange={handleModeChange}
               onClearSelection={() => setSelected([])}
               onExecute={handleExecute}
@@ -242,12 +217,8 @@ export default function App() {
         </div>
       )}
 
-      {promotionPending && snapshot ? (
-        <PromotionDialog sideToMove={snapshot.side_to_move} onPromote={promote} />
-      ) : null}
-
-      {gameOver && snapshot ? (
-        <GameOverBanner status={gameStatus} sideToMove={snapshot.side_to_move} onReset={handleReset} />
+      {gameOver && (gameStatus === "white_wins" || gameStatus === "black_wins") ? (
+        <GameOverBanner status={gameStatus} onReset={handleReset} />
       ) : null}
     </div>
   );

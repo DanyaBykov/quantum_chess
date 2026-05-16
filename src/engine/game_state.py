@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from engine.board_state import BoardState, BasisState, parse_square, square_name
-from engine.quantum_ops import measure, merge_move, split_move
+from engine.quantum_ops import merge_move, observe_square, split_move
 
 
 def _piece_color(piece: str) -> str:
@@ -43,6 +43,21 @@ def _path_is_clear(basis: BasisState, src_idx: int, tgt_idx: int) -> bool:
     return True
 
 
+def _would_move_in_basis(basis: BasisState, src_idx: int, tgt_idx: int, piece: str) -> bool:
+    """True when piece can physically move src→tgt in this basis:
+    path to target is clear of any piece, AND the target is either empty,
+    occupied by an enemy piece, or occupied by the same piece type (quantum merge).
+    Does not check piece movement geometry — that is _is_legal_piece_move's job.
+    """
+    target_piece = basis[tgt_idx]
+    if target_piece is not None and _piece_color(target_piece) == _piece_color(piece) and target_piece != piece:
+        return False
+    lower = piece.lower()
+    if lower in ("b", "r", "q"):
+        return _path_is_clear(basis, src_idx, tgt_idx)
+    return True  # knights, kings, pawns have no intermediate squares to block
+
+
 def _is_legal_piece_move(
     piece: str,
     src_idx: int,
@@ -57,7 +72,10 @@ def _is_legal_piece_move(
 
     target_piece = basis[tgt_idx]
     if target_piece is not None and _piece_color(target_piece) == _piece_color(piece):
-        return False
+        # Allow moving to own copy's square (merge) — block only if different piece type
+        if target_piece != piece:
+            return False
+        # Same piece type at target: allowed (merges the two copies)
 
     file_delta, rank_delta = _delta(src_idx, tgt_idx)
     abs_file = abs(file_delta)
@@ -208,24 +226,28 @@ def _king_square(basis: BasisState, color: str) -> Optional[int]:
     return None
 
 
-def is_in_check(state: BoardState, color: str) -> bool:
-    """Return True if color's king is attacked in ANY basis state of the superposition."""
-    opponent_color = "black" if color == "white" else "white"
-    for basis in state.amplitudes:
-        king_idx = _king_square(basis, color)
-        if king_idx is None:
-            continue
-        for src_idx, piece in enumerate(basis):
-            if piece is None:
-                continue
-            if _piece_color(piece) != opponent_color:
-                continue
-            if _is_legal_piece_move(piece, src_idx, king_idx, basis):
-                return True
-    return False
-
-
 _ALL_SQUARES: list[str] = [square_name(idx) for idx in range(64)]
+
+
+def _basis_allows_move(
+    basis: BasisState,
+    src: str,
+    target: str,
+    ep_idx: Optional[int],
+    castling_rights: Optional[dict],
+    *,
+    allow_empty_target_for_pawn_diagonal: bool = False,
+) -> bool:
+    try:
+        validate_move_on_basis(
+            basis, src, target,
+            en_passant_idx=ep_idx,
+            castling_rights=castling_rights,
+            allow_empty_target_for_pawn_diagonal=allow_empty_target_for_pawn_diagonal,
+        )
+        return True
+    except ValueError:
+        return False
 
 
 def legal_moves_for(
@@ -237,11 +259,13 @@ def legal_moves_for(
 ) -> list[tuple[str, str]]:
     """Return all legal (src, target) move pairs for the given color.
 
-    A move is legal if:
-    - The color has a piece at src in at least one basis state.
-    - validate_move_on_basis succeeds on every occupied basis state for src.
-    - The modified branches after the move do not leave color's king in check.
-    - For castling: king is not currently in check, and does not pass through check.
+    A move is legal if the color has a piece at src in at least one basis state
+    AND validate_move_on_basis succeeds on at least one occupied basis state for src.
+    This allows moves through squares occupied only in some branches (implicit
+    entanglement: the piece moves in clear-path branches, stays in blocked ones).
+
+    Note: No self-check filtering; check/checkmate is not a concept in this
+    quantum chess variant.
     """
     ep_idx = parse_square(en_passant_target) if en_passant_target else None
 
@@ -268,85 +292,35 @@ def legal_moves_for(
             if target == src:
                 continue
 
-            tgt_idx = parse_square(target)
-
-            valid = True
-            for basis, _ in occupied_bases:
-                try:
-                    validate_move_on_basis(
-                        basis, src, target,
-                        en_passant_idx=ep_idx,
-                        castling_rights=castling_rights,
-                    )
-                except ValueError:
-                    valid = False
-                    break
-
-            if not valid:
+            if not any(
+                _basis_allows_move(b, src, target, ep_idx, castling_rights)
+                for b, _ in occupied_bases
+            ):
                 continue
-
-            # Build modified branches including castling rook and en passant pawn removal
-            modified: dict = {}
-            for basis, amp in occupied_bases:
-                moved = list(basis)
-                _apply_move_to_basis(moved, src_idx, tgt_idx, ep_idx)
-                moved_t = tuple(moved)
-                modified[moved_t] = modified.get(moved_t, 0j) + amp
-
-            if not modified:
-                continue
-
-            trial = BoardState(amplitudes=dict(modified), entanglement_map=state.entanglement_map)
-            trial.normalize()
-            if is_in_check(trial, color):
-                continue
-
-            # Castling extra guards: not while in check, not through check
-            piece_at_src = occupied_bases[0][0][src_idx]
-            if piece_at_src is not None and piece_at_src.lower() == "k":
-                file_delta = (tgt_idx % 8) - (src_idx % 8)
-                if abs(file_delta) == 2:
-                    if is_in_check(state, color):
-                        continue
-                    pass_idx = src_idx + (1 if file_delta > 0 else -1)
-                    pass_modified: dict = {}
-                    for basis, amp in occupied_bases:
-                        moved2 = list(basis)
-                        moved2[pass_idx] = moved2[src_idx]
-                        moved2[src_idx] = None
-                        moved2_t = tuple(moved2)
-                        pass_modified[moved2_t] = pass_modified.get(moved2_t, 0j) + amp
-                    if pass_modified:
-                        pass_trial = BoardState(
-                            amplitudes=dict(pass_modified),
-                            entanglement_map=state.entanglement_map,
-                        )
-                        pass_trial.normalize()
-                        if is_in_check(pass_trial, color):
-                            continue
 
             result.append((src, target))
 
     return result
 
 
-def game_status(
-    state: BoardState,
-    side_to_move: str,
-    *,
-    castling_rights: Optional[dict] = None,
-    en_passant_target: Optional[str] = None,
-) -> str:
-    """Return 'ongoing', 'checkmate', or 'stalemate' for the side to move."""
-    if legal_moves_for(
-        state, side_to_move,
-        castling_rights=castling_rights,
-        en_passant_target=en_passant_target,
-    ):
-        return "ongoing"
-    if is_in_check(state, side_to_move):
-        return "checkmate"
-    return "stalemate"
+def _king_probability(state: BoardState, color: str) -> float:
+    king_piece = "K" if color == "white" else "k"
+    return sum(
+        abs(amp) ** 2
+        for basis, amp in state.amplitudes.items()
+        if any(p == king_piece for p in basis)
+    )
+
+
+def game_status(state: BoardState) -> str:
+    """Return 'ongoing', 'white_wins', or 'black_wins'."""
+    white_alive = _king_probability(state, "white") > 0
+    black_alive = _king_probability(state, "black") > 0
+    if not white_alive:
+        return "black_wins"
+    if not black_alive:
+        return "white_wins"
+    return "ongoing"
 
 
 _CASTLING_INITIAL = {
@@ -376,6 +350,7 @@ class QuantumGame:
     promotion_square: Optional[str] = None
     castling_rights: dict = field(default_factory=lambda: dict(_CASTLING_INITIAL))
     en_passant_target: Optional[str] = None
+    last_move_outcome: Optional[str] = None  # "success" | "capture_failed"
 
     @classmethod
     def initial(cls) -> "QuantumGame":
@@ -399,9 +374,57 @@ class QuantumGame:
         for right in _CASTLING_REVOKE_MAP.get(square_idx, []):
             self.castling_rights[right] = False
 
+    def _execute_move(self, src_idx: int, tgt_idx: int, piece: str, ep_idx: Optional[int]):
+        """Apply the physical move to branches where the path is clear; leave blocked branches
+        unmodified (implicit entanglement). Handle rook for castling, handle en passant removal."""
+        modified: dict = {}
+        unmodified: dict = {}
+        for basis, amplitude in self.board_state.amplitudes.items():
+            if basis[src_idx] is None:
+                unmodified[basis] = amplitude
+                continue
+            if not _would_move_in_basis(basis, src_idx, tgt_idx, piece):
+                # Path blocked in this branch: piece stays, creating entanglement
+                unmodified[basis] = amplitude
+                continue
+            moved = list(basis)
+            _apply_move_to_basis(moved, src_idx, tgt_idx, ep_idx)
+            moved_t = tuple(moved)
+            modified[moved_t] = modified.get(moved_t, 0j) + amplitude
+
+        result_amps = dict(modified)
+        for basis, amp in unmodified.items():
+            result_amps[basis] = result_amps.get(basis, 0j) + amp
+        self.board_state = BoardState(
+            amplitudes=result_amps,
+            entanglement_map=self.board_state.entanglement_map,
+        )
+        self.board_state.normalize()
+
+        self._revoke_castling_rights(src_idx)
+        self._revoke_castling_rights(tgt_idx)
+
+        if piece.lower() == "p" and abs(tgt_idx - src_idx) == 16:
+            self.en_passant_target = square_name((src_idx + tgt_idx) // 2)
+        else:
+            self.en_passant_target = None
+
+        if (piece == "P" and tgt_idx // 8 == 7) or (piece == "p" and tgt_idx // 8 == 0):
+            queen = "Q" if piece.isupper() else "q"
+            new_amps = {}
+            for basis, amp in self.board_state.amplitudes.items():
+                lst = list(basis)
+                if lst[tgt_idx] == piece:
+                    lst[tgt_idx] = queen
+                new_amps[tuple(lst)] = amp
+            self.board_state = BoardState(
+                amplitudes=new_amps,
+                entanglement_map=self.board_state.entanglement_map,
+            )
+
+        self._advance_turn()
+
     def apply_classical_move(self, src: str, target: str):
-        if self.promotion_pending:
-            raise ValueError("promotion pending: call apply_promotion first")
         occupied_bases = list(_occupied_basis_states(self.board_state, src))
         if not occupied_bases:
             raise ValueError(f"no piece present at {src}")
@@ -413,63 +436,84 @@ class QuantumGame:
         self._assert_side_to_move(piece)
 
         ep_idx = parse_square(self.en_passant_target) if self.en_passant_target else None
-        for basis in occupied_bases:
-            validate_move_on_basis(
-                basis, src, target,
-                en_passant_idx=ep_idx,
-                castling_rights=self.castling_rights,
-            )
 
         src_idx = parse_square(src)
         tgt_idx = parse_square(target)
 
-        modified: dict = {}
-        unmodified: dict = {}
-        for basis, amplitude in self.board_state.amplitudes.items():
-            if basis[src_idx] is None:
-                unmodified[basis] = amplitude
-                continue
-            moved = list(basis)
-            _apply_move_to_basis(moved, src_idx, tgt_idx, ep_idx)
-            moved_t = tuple(moved)
-            modified[moved_t] = modified.get(moved_t, 0j) + amplitude
+        is_pawn = piece.lower() == "p"
+        is_pawn_diagonal = is_pawn and abs((tgt_idx % 8) - (src_idx % 8)) == 1
 
-        if modified:
-            trial = BoardState(
-                amplitudes=dict(modified),
-                entanglement_map=self.board_state.entanglement_map,
-            )
-            trial.normalize()
-            color = _piece_color(piece)
-            if is_in_check(trial, color):
-                raise ValueError(f"move leaves {color}'s king in check")
-
-        self.board_state = BoardState(
-            amplitudes={**modified, **unmodified},
-            entanglement_map=self.board_state.entanglement_map,
+        is_ep = ep_idx is not None and tgt_idx == ep_idx
+        is_capture = any(
+            basis[tgt_idx] is not None and _piece_color(basis[tgt_idx]) != _piece_color(piece)
+            for basis in self.board_state.amplitudes
+            if basis[src_idx] is not None
         )
-        self.board_state.normalize()
 
-        # Revoke rights for the moved piece and for any rook captured on its home square
-        self._revoke_castling_rights(src_idx)
-        self._revoke_castling_rights(tgt_idx)
+        # ANY-basis check: move must be geometrically valid in at least one occupied branch.
+        # Branches where the path is blocked will be left unmodified by _execute_move,
+        # creating implicit entanglement between the moving piece and the blocker.
+        any_valid = any(
+            _basis_allows_move(
+                basis, src, target,
+                ep_idx,
+                self.castling_rights,
+                allow_empty_target_for_pawn_diagonal=is_pawn_diagonal and (is_capture or is_ep),
+            )
+            for basis in occupied_bases
+        )
+        if not any_valid:
+            # Raise error from the first basis so the caller sees a meaningful message
+            validate_move_on_basis(
+                occupied_bases[0], src, target,
+                allow_empty_target_for_pawn_diagonal=is_pawn_diagonal and (is_capture or is_ep),
+                en_passant_idx=ep_idx,
+                castling_rights=self.castling_rights,
+            )
 
-        # Track en passant target for opponent's next move
-        if piece.lower() == "p" and abs(tgt_idx - src_idx) == 16:
-            self.en_passant_target = square_name((src_idx + tgt_idx) // 2)
-        else:
-            self.en_passant_target = None
+        needs_src_observation = (is_capture or is_pawn_diagonal or is_ep) and \
+                                self.board_state.probability(src) < 1.0 - 1e-9
 
-        if (piece == "P" and tgt_idx // 8 == 7) or (piece == "p" and tgt_idx // 8 == 0):
-            self.promotion_pending = True
-            self.promotion_square = target
-            return
+        src_present_after_src_obs = True
+        if needs_src_observation:
+            src_present, self.board_state = observe_square(self.board_state, src)
+            src_present_after_src_obs = src_present
+            if not src_present:
+                self.last_move_outcome = "capture_failed"
+                self._revoke_castling_rights(src_idx)
+                self.en_passant_target = None
+                self._advance_turn()
+                return
 
-        self._advance_turn()
+        # Pawn diagonal capture: also observe the target
+        if src_present_after_src_obs and is_pawn_diagonal and not is_ep:
+            tgt_prob = self.board_state.probability(target)
+            if tgt_prob < 1.0 - 1e-9:
+                tgt_present, self.board_state = observe_square(self.board_state, target)
+                if not tgt_present:
+                    self.last_move_outcome = "capture_failed"
+                    self.en_passant_target = None
+                    self._advance_turn()
+                    return
+
+        # En passant: also observe the captured pawn at its actual square
+        if src_present_after_src_obs and is_ep:
+            direction = 1 if piece.isupper() else -1
+            captured_rank = (ep_idx // 8) - direction
+            captured_sq = square_name(captured_rank * 8 + (ep_idx % 8))
+            cap_prob = self.board_state.probability(captured_sq)
+            if cap_prob < 1.0 - 1e-9:
+                cap_present, self.board_state = observe_square(self.board_state, captured_sq)
+                if not cap_present:
+                    self.last_move_outcome = "capture_failed"
+                    self.en_passant_target = None
+                    self._advance_turn()
+                    return
+
+        self._execute_move(src_idx, tgt_idx, piece, ep_idx)
+        self.last_move_outcome = "success"
 
     def apply_split_move(self, src: str, target_a: str, target_b: str):
-        if self.promotion_pending:
-            raise ValueError("promotion pending: call apply_promotion first")
         if target_a == target_b:
             raise ValueError("split move targets must differ")
 
@@ -477,11 +521,16 @@ class QuantumGame:
         self._assert_side_to_move(piece)
 
         occupied_bases = list(_occupied_basis_states(self.board_state, src))
-        # castling_rights={} prevents a king from treating a 2-square move as castling;
-        # split/merge never move the rook, so castling is disallowed in these modes.
-        for basis in occupied_bases:
-            validate_move_on_basis(basis, src, target_a, castling_rights={})
-            validate_move_on_basis(basis, src, target_b, castling_rights={})
+        # ANY-basis: valid if at least one branch allows both split targets
+        any_valid = any(
+            _basis_allows_move(b, src, target_a, None, self.castling_rights) and
+            _basis_allows_move(b, src, target_b, None, self.castling_rights)
+            for b in occupied_bases
+        )
+        if not any_valid:
+            # Raise a meaningful error from the first basis
+            validate_move_on_basis(occupied_bases[0], src, target_a, castling_rights=self.castling_rights)
+            validate_move_on_basis(occupied_bases[0], src, target_b, castling_rights=self.castling_rights)
 
         if piece.lower() == "p":
             back_rank = 7 if piece.isupper() else 0
@@ -493,11 +542,38 @@ class QuantumGame:
 
         self.board_state = split_move(self.board_state, src, target_a, target_b)
         self.board_state.normalize()
+
+        # If king split to a castling destination, move the rook in those branches
+        if piece.lower() == "k":
+            src_idx_local = parse_square(src)
+            for target in (target_a, target_b):
+                tgt_idx = parse_square(target)
+                file_delta = (tgt_idx % 8) - (src_idx_local % 8)
+                if abs(file_delta) == 2:
+                    rank = src_idx_local // 8
+                    if file_delta > 0:
+                        rook_from = rank * 8 + 7
+                        rook_to = rank * 8 + 5
+                    else:
+                        rook_from = rank * 8 + 0
+                        rook_to = rank * 8 + 3
+                    new_amps = {}
+                    for basis, amp in self.board_state.amplitudes.items():
+                        if basis[tgt_idx] == piece:
+                            lst = list(basis)
+                            lst[rook_to] = lst[rook_from]
+                            lst[rook_from] = None
+                            new_amps[tuple(lst)] = amp
+                        else:
+                            new_amps[basis] = amp
+                    self.board_state = BoardState(
+                        amplitudes=new_amps,
+                        entanglement_map=self.board_state.entanglement_map,
+                    )
+
         self._advance_turn()
 
     def apply_merge_move(self, src_a: str, src_b: str, target: str):
-        if self.promotion_pending:
-            raise ValueError("promotion pending: call apply_promotion first")
         piece_a = _piece_for_quantum_source(self.board_state, src_a)
         piece_b = _piece_for_quantum_source(self.board_state, src_b)
         if piece_a != piece_b:
@@ -510,15 +586,30 @@ class QuantumGame:
         if not occupied_a or not occupied_b:
             raise ValueError("merge move requires occupied branches at both source squares")
 
-        for basis in occupied_a:
+        # ANY-basis: each source must be able to reach target in at least one branch
+        any_valid_a = any(
+            _basis_allows_move(
+                b, src_a, target, None, {},
+                allow_empty_target_for_pawn_diagonal=piece_a.lower() == "p",
+            )
+            for b in occupied_a
+        )
+        any_valid_b = any(
+            _basis_allows_move(
+                b, src_b, target, None, {},
+                allow_empty_target_for_pawn_diagonal=piece_b.lower() == "p",
+            )
+            for b in occupied_b
+        )
+        if not any_valid_a:
             validate_move_on_basis(
-                basis, src_a, target,
+                list(occupied_a)[0], src_a, target,
                 allow_empty_target_for_pawn_diagonal=piece_a.lower() == "p",
                 castling_rights={},
             )
-        for basis in occupied_b:
+        if not any_valid_b:
             validate_move_on_basis(
-                basis, src_b, target,
+                list(occupied_b)[0], src_b, target,
                 allow_empty_target_for_pawn_diagonal=piece_b.lower() == "p",
                 castling_rights={},
             )
@@ -529,32 +620,6 @@ class QuantumGame:
 
         self.board_state = merge_move(self.board_state, src_a, src_b, target)
         self._advance_turn()
-
-    def apply_promotion(self, chosen_piece: str):
-        if not self.promotion_pending:
-            raise ValueError("no promotion is pending")
-        color_pieces = {"Q", "R", "B", "N"} if self.side_to_move == "white" else {"q", "r", "b", "n"}
-        if chosen_piece not in color_pieces:
-            raise ValueError(f"invalid promotion piece: {chosen_piece!r}")
-        sq_idx = parse_square(self.promotion_square)
-        new_amplitudes = {}
-        for basis, amp in self.board_state.amplitudes.items():
-            lst = list(basis)
-            if lst[sq_idx] is not None:
-                lst[sq_idx] = chosen_piece
-            new_amplitudes[tuple(lst)] = amp
-        if not any(b[sq_idx] is not None for b in self.board_state.amplitudes):
-            raise ValueError("no pawn found at promotion square — board state is inconsistent")
-        self.board_state = BoardState(
-            amplitudes=new_amplitudes,
-            entanglement_map=self.board_state.entanglement_map,
-        )
-        self.promotion_pending = False
-        self.promotion_square = None
-        self._advance_turn()
-
-    def measure_square(self, target: str):
-        self.board_state = measure(self.board_state, target)
 
     def board_summary(self) -> dict[str, Optional[str]]:
         summary = {}

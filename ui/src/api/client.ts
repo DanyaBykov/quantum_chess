@@ -1,9 +1,7 @@
 import type {
   ClassicalMovePayload,
   GameSnapshot,
-  MeasurePayload,
   MergeMovePayload,
-  PromotePayload,
   SplitMovePayload,
 } from "./types";
 
@@ -54,17 +52,4 @@ export const gameClient = {
     });
   },
 
-  measureSquare(payload: MeasurePayload): Promise<GameSnapshot> {
-    return request<GameSnapshot>("/game/measure", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  promote(payload: PromotePayload): Promise<GameSnapshot> {
-    return request<GameSnapshot>("/game/move/promote", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
 };

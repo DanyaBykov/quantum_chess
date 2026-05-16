@@ -76,6 +76,8 @@
 }
 
 .square:hover { filter: brightness(1.14); }
+.square-inert { cursor: default; }
+.square-inert:hover { filter: none; }
 
 .square-light { background: var(--board-light); }
 .square-dark  { background: var(--board-dark); }

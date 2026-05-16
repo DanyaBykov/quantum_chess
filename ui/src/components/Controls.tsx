@@ -16,7 +16,6 @@ const MODES: { id: ActionMode; icon: string; label: string }[] = [
   { id: "classical", icon: "→", label: "Classical" },
   { id: "split",     icon: "⇌", label: "Split" },
   { id: "merge",     icon: "⊕", label: "Merge" },
-  { id: "measure",   icon: "◎", label: "Measure" },
 ];
 
 export function Controls({ mode, selectedSquares, loading, disabled, onModeChange, onClearSelection, onExecute, onReset }: ControlsProps) {

@@ -14,9 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from api.schemas import (
     ClassicalMoveRequest,
     GameSnapshot,
-    MeasureRequest,
     MergeMoveRequest,
-    PromoteRequest,
     SplitMoveRequest,
 )
 from api.state_store import snapshot_game, store
@@ -68,26 +66,6 @@ def apply_merge_move(payload: MergeMoveRequest) -> GameSnapshot:
     return snapshot_game(game)
 
 
-@app.post("/game/move/promote", response_model=GameSnapshot)
-def apply_promotion(payload: PromoteRequest) -> GameSnapshot:
-    game = store.get_game()
-    try:
-        game.apply_promotion(payload.piece)
-    except ValueError as exc:
-        _handle_engine_error(exc)
-    return snapshot_game(game)
-
-
-@app.post("/game/measure", response_model=GameSnapshot)
-def measure_square(payload: MeasureRequest) -> GameSnapshot:
-    game = store.get_game()
-    try:
-        game.measure_square(payload.target)
-    except ValueError as exc:
-        _handle_engine_error(exc)
-    return snapshot_game(game)
-
-
 if UI_DIST.exists():
     assets_dir = UI_DIST / "assets"
     if assets_dir.exists():
@@ -99,6 +77,11 @@ def serve_index():
     if not UI_DIST.exists():
         raise HTTPException(status_code=404, detail="UI bundle not found")
     return FileResponse(UI_DIST / "index.html")
+
+
+@app.post("/{path:path}")
+def reject_unknown_post(path: str):
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 @app.get("/{path:path}")
