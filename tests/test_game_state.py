@@ -116,6 +116,25 @@ class QuantumGameTest(unittest.TestCase):
         self.assertAlmostEqual(abs(next(iter(game.board_state.amplitudes.values()))) ** 2, 1.0)
 
 
+class MergeMoveRulesTest(unittest.TestCase):
+    def test_merge_move_rejects_occupied_target_square(self):
+        import math
+        amp = 1 / math.sqrt(2)
+        basis_a = BoardState._board_to_tuple({"a3": "N", "b1": "p", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"c3": "N", "b1": "p", "e1": "K", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis_a: amp + 0j, basis_b: amp + 0j}))
+
+        with self.assertRaisesRegex(ValueError, "merge target must be empty"):
+            game.apply_merge_move("a3", "c3", "b1")
+
+    def test_merge_move_rejects_independent_same_type_pieces(self):
+        basis = BoardState._board_to_tuple({"a3": "N", "c3": "N", "e1": "K", "e8": "k"})
+        game = QuantumGame(board_state=BoardState(amplitudes={basis: 1 + 0j}))
+
+        with self.assertRaisesRegex(ValueError, "same original piece"):
+            game.apply_merge_move("a3", "c3", "b1")
+
+
 
 
 class LegalMovesTest(unittest.TestCase):
@@ -351,6 +370,59 @@ class EnPassantTest(unittest.TestCase):
         )
         game.apply_split_move("b1", "a3", "c3")
         self.assertIsNone(game.en_passant_target)
+
+    def test_en_passant_target_observed_before_attacker(self):
+        # Four equally likely branches:
+        # - white pawn at c4 or c3
+        # - black pawn at d4 or d3
+        # EP capture is c4xd5 with captured pawn on d4.
+        basis_a = BoardState._board_to_tuple({"c4": "P", "d4": "p", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"c3": "P", "d4": "p", "e1": "K", "e8": "k"})
+        basis_c = BoardState._board_to_tuple({"c4": "P", "d3": "p", "e1": "K", "e8": "k"})
+        basis_d = BoardState._board_to_tuple({"c3": "P", "d3": "p", "e1": "K", "e8": "k"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={
+                basis_a: 0.5 + 0j,
+                basis_b: 0.5 + 0j,
+                basis_c: 0.5 + 0j,
+                basis_d: 0.5 + 0j,
+            }),
+            en_passant_target="d5",
+        )
+
+        with patch("engine.quantum_ops.random.choices", return_value=[False]) as mocked:
+            game.apply_classical_move("c4", "d5")
+
+        self.assertEqual(game.last_move_outcome, "capture_failed")
+        self.assertEqual(mocked.call_count, 1)
+        # Attacker wasn't observed after target failed; white pawn stays superposed.
+        self.assertAlmostEqual(game.board_state.probability("c4"), 0.5, places=5)
+        self.assertAlmostEqual(game.board_state.probability("c3"), 0.5, places=5)
+
+    def test_en_passant_can_fail_after_target_present_if_attacker_absent(self):
+        basis_a = BoardState._board_to_tuple({"c4": "P", "d4": "p", "e1": "K", "e8": "k"})
+        basis_b = BoardState._board_to_tuple({"c3": "P", "d4": "p", "e1": "K", "e8": "k"})
+        basis_c = BoardState._board_to_tuple({"c4": "P", "d3": "p", "e1": "K", "e8": "k"})
+        basis_d = BoardState._board_to_tuple({"c3": "P", "d3": "p", "e1": "K", "e8": "k"})
+        game = QuantumGame(
+            board_state=BoardState(amplitudes={
+                basis_a: 0.5 + 0j,
+                basis_b: 0.5 + 0j,
+                basis_c: 0.5 + 0j,
+                basis_d: 0.5 + 0j,
+            }),
+            en_passant_target="d5",
+        )
+
+        with patch("engine.quantum_ops.random.choices", side_effect=[[True], [False]]) as mocked:
+            game.apply_classical_move("c4", "d5")
+
+        self.assertEqual(game.last_move_outcome, "capture_failed")
+        self.assertEqual(mocked.call_count, 2)
+        # Target observed present first; then attacker observed absent and removed from c4.
+        self.assertAlmostEqual(game.board_state.probability("d4"), 1.0, places=5)
+        self.assertAlmostEqual(game.board_state.probability("c4"), 0.0, places=5)
+        self.assertAlmostEqual(game.board_state.probability("c3"), 1.0, places=5)
 
 
 class WinConditionTest(unittest.TestCase):

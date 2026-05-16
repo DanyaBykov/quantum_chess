@@ -43,6 +43,7 @@ function computeLegalTargets(mode: ActionMode, selected: string[], snapshot: Gam
 
   if (mode === "merge") {
     if (selected.length === 0) return [];
+    const probabilities = snapshot.probabilities;
 
     if (selected.length === 1) {
       // Show squares that hold the same piece type (potential merge partners)
@@ -57,7 +58,7 @@ function computeLegalTargets(mode: ActionMode, selected: string[], snapshot: Gam
     const [srcA, srcB] = selected;
     const setA = new Set(legalMoves.filter(([src]) => src === srcA).map(([, tgt]) => tgt));
     const setB = new Set(legalMoves.filter(([src]) => src === srcB).map(([, tgt]) => tgt));
-    return [...new Set([...setA, ...setB])];
+    return [...new Set([...setA, ...setB])].filter((sq) => (probabilities[sq] ?? 0) <= 1e-9);
   }
 
   return [];

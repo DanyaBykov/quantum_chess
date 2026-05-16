@@ -475,29 +475,11 @@ class QuantumGame:
                                 self.board_state.probability(src) < 1.0 - 1e-9
 
         src_present_after_src_obs = True
-        if needs_src_observation:
-            src_present, self.board_state = observe_square(self.board_state, src)
-            src_present_after_src_obs = src_present
-            if not src_present:
-                self.last_move_outcome = "capture_failed"
-                self._revoke_castling_rights(src_idx)
-                self.en_passant_target = None
-                self._advance_turn()
-                return
 
-        # Pawn diagonal capture: also observe the target
-        if src_present_after_src_obs and is_pawn_diagonal and not is_ep:
-            tgt_prob = self.board_state.probability(target)
-            if tgt_prob < 1.0 - 1e-9:
-                tgt_present, self.board_state = observe_square(self.board_state, target)
-                if not tgt_present:
-                    self.last_move_outcome = "capture_failed"
-                    self.en_passant_target = None
-                    self._advance_turn()
-                    return
-
-        # En passant: also observe the captured pawn at its actual square
-        if src_present_after_src_obs and is_ep:
+        # En passant: observe captured pawn first.
+        # This matches rules/examples where a failed target observation can abort
+        # before the attacking pawn is observed.
+        if is_ep:
             direction = 1 if piece.isupper() else -1
             captured_rank = (ep_idx // 8) - direction
             captured_sq = square_name(captured_rank * 8 + (ep_idx % 8))
@@ -509,6 +491,35 @@ class QuantumGame:
                     self.en_passant_target = None
                     self._advance_turn()
                     return
+            if needs_src_observation:
+                src_present, self.board_state = observe_square(self.board_state, src)
+                src_present_after_src_obs = src_present
+                if not src_present:
+                    self.last_move_outcome = "capture_failed"
+                    self.en_passant_target = None
+                    self._advance_turn()
+                    return
+        else:
+            if needs_src_observation:
+                src_present, self.board_state = observe_square(self.board_state, src)
+                src_present_after_src_obs = src_present
+                if not src_present:
+                    self.last_move_outcome = "capture_failed"
+                    self._revoke_castling_rights(src_idx)
+                    self.en_passant_target = None
+                    self._advance_turn()
+                    return
+
+            # Pawn diagonal capture: also observe the target
+            if src_present_after_src_obs and is_pawn_diagonal:
+                tgt_prob = self.board_state.probability(target)
+                if tgt_prob < 1.0 - 1e-9:
+                    tgt_present, self.board_state = observe_square(self.board_state, target)
+                    if not tgt_present:
+                        self.last_move_outcome = "capture_failed"
+                        self.en_passant_target = None
+                        self._advance_turn()
+                        return
 
         self._execute_move(src_idx, tgt_idx, piece, ep_idx)
         self.last_move_outcome = "success"
@@ -581,44 +592,55 @@ class QuantumGame:
         self._advance_turn()
 
     def apply_merge_move(self, src_a: str, src_b: str, target: str):
+        if src_a == src_b:
+            raise ValueError("merge move requires two distinct source squares")
+
         piece_a = _piece_for_quantum_source(self.board_state, src_a)
         piece_b = _piece_for_quantum_source(self.board_state, src_b)
         if piece_a != piece_b:
             raise ValueError("merge move requires matching piece identities")
 
+        if self.board_state.probability(target) > 1e-9:
+            raise ValueError("merge target must be empty (merge moves cannot capture)")
+
         self._assert_side_to_move(piece_a)
+
+        src_a_idx = parse_square(src_a)
+        src_b_idx = parse_square(src_b)
 
         occupied_a = list(_occupied_basis_states(self.board_state, src_a))
         occupied_b = list(_occupied_basis_states(self.board_state, src_b))
         if not occupied_a or not occupied_b:
             raise ValueError("merge move requires occupied branches at both source squares")
 
+        # Two independent pieces of the same type can coexist in one basis.
+        # A legal merge requires two copies of one original piece, which are
+        # mutually exclusive across branches.
+        if any(basis[src_a_idx] is not None and basis[src_b_idx] is not None for basis in self.board_state.amplitudes):
+            raise ValueError("merge move requires two copies of the same original piece")
+
         # ANY-basis: each source must be able to reach target in at least one branch
         any_valid_a = any(
             _basis_allows_move(
-                b, src_a, target, None, {},
-                allow_empty_target_for_pawn_diagonal=piece_a.lower() == "p",
+                b, src_a, target, None, self.castling_rights,
             )
             for b in occupied_a
         )
         any_valid_b = any(
             _basis_allows_move(
-                b, src_b, target, None, {},
-                allow_empty_target_for_pawn_diagonal=piece_b.lower() == "p",
+                b, src_b, target, None, self.castling_rights,
             )
             for b in occupied_b
         )
         if not any_valid_a:
             validate_move_on_basis(
                 list(occupied_a)[0], src_a, target,
-                allow_empty_target_for_pawn_diagonal=piece_a.lower() == "p",
-                castling_rights={},
+                castling_rights=self.castling_rights,
             )
         if not any_valid_b:
             validate_move_on_basis(
                 list(occupied_b)[0], src_b, target,
-                allow_empty_target_for_pawn_diagonal=piece_b.lower() == "p",
-                castling_rights={},
+                castling_rights=self.castling_rights,
             )
 
         self._revoke_castling_rights(parse_square(src_a))
