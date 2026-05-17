@@ -180,13 +180,13 @@ class ApiTest(unittest.TestCase):
         so we use percent-encoded traversal (%2e%2e%2f) which the ASGI layer
         decodes to '../' and delivers to the route handler verbatim.
 
-        ui/package.json exists one level above ui/dist/ and would be served by
-        the vulnerable code (UI_DIST / '../package.json' exists).  With the
-        is_relative_to guard the route must fall back to index.html instead.
-        We compare response *content* rather than status code because both the
-        safe fallback and a vulnerable leak return HTTP 200.
+        Skipped when UI_DIST is not built: without a dist/ directory the route
+        returns 404 for all paths, so the guard is moot in that environment.
         """
         from api.app import UI_DIST
+
+        if not UI_DIST.exists():
+            self.skipTest("UI bundle not built — path traversal guard not exercised")
 
         response = self.client.get("/%2e%2e%2fpackage.json")
         index_bytes = (UI_DIST / "index.html").read_bytes()
