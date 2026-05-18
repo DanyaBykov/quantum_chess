@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+import math
+
 from engine.board_state import BoardState, BasisState, parse_square, square_name
 from engine.quantum_ops import merge_move, observe_square, split_move
 
@@ -525,6 +527,42 @@ class QuantumGame:
         self._execute_move(src_idx, tgt_idx, piece, ep_idx)
         self.last_move_outcome = "success"
 
+    def _split_move_with_entanglement(
+        self, state: BoardState, src: str, t1: str, t2: str
+    ) -> BoardState:
+        """Split move that respects per-basis path blockage.
+
+        In basis states where both paths are clear, the piece splits 50/50.
+        In basis states where either path is blocked by a superposition piece,
+        the piece stays at src, entangling it with the blocker.
+        """
+        src_idx = parse_square(src)
+        t1_idx = parse_square(t1)
+        t2_idx = parse_square(t2)
+        amp_t1 = 1 / math.sqrt(2) + 0j
+        amp_t2 = 0 + 1j / math.sqrt(2)
+
+        new_state = BoardState()
+        for basis, amp in state.amplitudes.items():
+            piece = basis[src_idx]
+            if piece is None:
+                new_state.amplitudes[basis] = new_state.amplitudes.get(basis, 0j) + amp
+                continue
+
+            both_clear = (
+                _basis_allows_move(basis, src, t1, None, None) and
+                _basis_allows_move(basis, src, t2, None, None)
+            )
+            if both_clear:
+                b1 = list(basis); b1[src_idx] = None; b1[t1_idx] = piece; b1 = tuple(b1)
+                b2 = list(basis); b2[src_idx] = None; b2[t2_idx] = piece; b2 = tuple(b2)
+                new_state.amplitudes[b1] = new_state.amplitudes.get(b1, 0j) + amp * amp_t1
+                new_state.amplitudes[b2] = new_state.amplitudes.get(b2, 0j) + amp * amp_t2
+            else:
+                new_state.amplitudes[basis] = new_state.amplitudes.get(basis, 0j) + amp
+
+        return new_state
+
     def apply_split_move(self, src: str, target_a: str, target_b: str):
         self.last_move_outcome = None
         if target_a == target_b:
@@ -560,7 +598,7 @@ class QuantumGame:
         self._revoke_castling_rights(parse_square(src))
         self.en_passant_target = None
 
-        self.board_state = split_move(self.board_state, src, target_a, target_b)
+        self.board_state = self._split_move_with_entanglement(self.board_state, src, target_a, target_b)
         self.board_state.normalize()
 
         # If king split to a castling destination, move the rook in those branches
